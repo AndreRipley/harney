@@ -21,6 +21,17 @@ describe("checkConnection", () => {
     expect(checkConnection(part("p", "a"), nodes, edges)).toEqual({ ok: true });
   });
 
+  it("allows only one loop per agent", () => {
+    const { nodes, edges } = buildGraph([
+      { id: "a", kind: "agent", config: { name: "Main" } },
+      { id: "l1", kind: "loop", to: "a" },
+      { id: "l2", kind: "loop" },
+    ]);
+    const result = checkConnection(part("l2", "a"), nodes, edges);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.reason).toMatch(/already has a loop/);
+  });
+
   it("allows only one model per agent", () => {
     const { nodes, edges } = graph();
     const result = checkConnection(part("m2", "a"), nodes, edges);

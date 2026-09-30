@@ -114,6 +114,7 @@ export function Canvas() {
         onEdgesChange={onEdgesChange}
         onConnect={tryConnect}
         onConnectEnd={onConnectEnd}
+        onNodeClick={(_event, node) => useHarnessStore.getState().selectOnly(node.id)}
         onNodeDragStart={beginDrag}
         isValidConnection={isValidConnection}
         defaultEdgeOptions={defaultEdgeOptions}

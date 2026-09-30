@@ -4,12 +4,18 @@ export type NodeKind =
   | "agent"
   | "model"
   | "prompt"
+  | "loop"
+  | "context"
+  | "progress"
+  | "skill"
   | "tool"
   | "mcp"
   | "rule"
   | "policy"
+  | "sandbox"
   | "hook"
-  | "decision";
+  | "decision"
+  | "verifier";
 
 export type ComponentKind = Exclude<NodeKind, "agent">;
 
@@ -21,6 +27,9 @@ export type HookEvent = "preToolUse" | "postToolUse" | "sessionStart" | "userPro
 export type HookScope = "any" | "shell" | "edit";
 export type DecisionEvent = "preToolUse" | "userPromptSubmit" | "stop";
 export type DecisionQuestionType = "choice" | "score" | "noul";
+export type LoopMode = "workflow" | "autonomous";
+export type SandboxAccess = "read-only" | "workspace";
+export type VerifierCheck = "command" | "rubric";
 
 export interface AgentData {
   name: string;
@@ -102,6 +111,61 @@ export interface DecisionData {
   questions: DecisionQuestion[];
 }
 
+/** How the agent keeps going: a fixed sequence, or a loop that stops on a limit. */
+export interface LoopData {
+  name: string;
+  mode: LoopMode;
+  maxSteps: number;
+  stopOnBlocker: boolean;
+}
+
+/** What the model is allowed to see on a turn. */
+export interface ContextData {
+  name: string;
+  budgetChars: number;
+  compactHistory: boolean;
+  alwaysLoad: string[];
+  onDemand: string[];
+  treatAsUntrusted: boolean;
+}
+
+/** Durable task state that survives the model's context window. */
+export interface ProgressData {
+  name: string;
+  objective: string;
+  checklist: string[];
+  notes: string;
+}
+
+/** Instructions loaded only when the task needs them. */
+export interface SkillData {
+  name: string;
+  description: string;
+  content: string;
+}
+
+/** Where actions run, separate from the session history. */
+export interface SandboxData {
+  name: string;
+  access: SandboxAccess;
+  timeoutSeconds: number;
+}
+
+/** An outcome check that is not the agent grading itself. */
+export interface VerifierData {
+  name: string;
+  check: VerifierCheck;
+  command: string;
+  rubric: string;
+  separateEvaluator: boolean;
+}
+
+export interface EvalScenario {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
 export interface KindDataMap {
   agent: AgentData;
   model: ModelData;
@@ -112,6 +176,12 @@ export interface KindDataMap {
   policy: PolicyData;
   hook: HookData;
   decision: DecisionData;
+  loop: LoopData;
+  context: ContextData;
+  progress: ProgressData;
+  skill: SkillData;
+  sandbox: SandboxData;
+  verifier: VerifierData;
 }
 
 export type HarnessNodeData = {
@@ -147,6 +217,12 @@ export interface CompiledAgent {
   mcpServers: WithNode<McpData>[];
   hooks: WithNode<HookData>[];
   decisions: WithNode<DecisionData>[];
+  loops: WithNode<LoopData>[];
+  contexts: WithNode<ContextData>[];
+  progressRecords: WithNode<ProgressData>[];
+  skills: WithNode<SkillData>[];
+  sandboxes: WithNode<SandboxData>[];
+  verifiers: WithNode<VerifierData>[];
 }
 
 export interface HarnessConfig {
@@ -168,7 +244,13 @@ export type Feature =
   | "mcp"
   | "hooks"
   | "decisions"
-  | "subagents";
+  | "subagents"
+  | "loop"
+  | "context"
+  | "progress"
+  | "skill"
+  | "sandbox"
+  | "verifier";
 
 export interface ExportFile {
   path: string;

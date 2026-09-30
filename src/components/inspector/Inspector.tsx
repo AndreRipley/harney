@@ -212,7 +212,23 @@ function NodePanel({ node }: { node: HarnessNode }) {
   );
 }
 
-const QUICK_ADD: NodeKind[] = ["model", "prompt", "tool", "mcp", "rule", "policy", "hook", "decision", "agent"];
+const QUICK_ADD: NodeKind[] = [
+  "model",
+  "prompt",
+  "loop",
+  "tool",
+  "mcp",
+  "skill",
+  "context",
+  "progress",
+  "rule",
+  "policy",
+  "sandbox",
+  "hook",
+  "decision",
+  "verifier",
+  "agent",
+];
 
 function QuickAdd({ agentId }: { agentId: string }) {
   const { addCard } = useCanvasActions();

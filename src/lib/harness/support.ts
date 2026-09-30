@@ -34,6 +34,18 @@ export function nodeFeatures(node: HarnessNode, isSubagent: boolean): Feature[] 
       return ["hooks"];
     case "decision":
       return ["decisions"];
+    case "loop":
+      return data.config.maxSteps > 0 ? ["loop"] : [];
+    case "context":
+      return ["context"];
+    case "progress":
+      return ["progress"];
+    case "skill":
+      return ["skill"];
+    case "sandbox":
+      return ["sandbox"];
+    case "verifier":
+      return ["verifier"];
   }
 }
 

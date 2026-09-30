@@ -6,10 +6,10 @@ import {
   playTools,
   type PlayTool,
   resolveApiModel,
-  STEP_CAP,
   systemPrompt,
   toolVerdict,
 } from "./play";
+import { stepLimit } from "./runtime";
 import type { BuiltinTool, CompiledAgent, DecisionQuestion, HarnessConfig, HarnessEdge, Provider } from "./types";
 
 export interface ModelToolCall {
@@ -30,6 +30,10 @@ export interface PlayStep {
   title: string;
   detail: string;
   tone: "neutral" | "allow" | "ask" | "deny";
+  /** What the model asked for. Distinct from the result the harness recorded. */
+  requested?: string;
+  /** What actually happened after the request. */
+  result?: string;
   pending?: boolean;
   /** The harness stopped to ask the person before this tool. */
   asked?: boolean;
@@ -65,7 +69,7 @@ async function modelHop(args: {
     body: JSON.stringify({
       provider: args.provider,
       model: args.model,
-      apiKey: args.apiKey,
+      apiKey: args.apiKey.trim(),
       system: args.system,
       messages: args.messages,
       tools: args.tools.map((tool) => ({ name: tool.name, description: tool.description })),
@@ -160,6 +164,7 @@ export async function rehearse(args: {
   onSteps: (steps: PlayStep[]) => void;
   onAsk: (step: PlayStep) => Promise<"approve" | "deny">;
   onActive: (nodeId: string | null, edgeId: string | null) => void;
+  taskLog?: string;
 }): Promise<{ text: string; steps: PlayStep[]; usage: { input: number; output: number }; messages: ModelMessage[] }> {
   const steps: PlayStep[] = [];
   const publish = () => args.onSteps(steps.map((step) => ({ ...step, children: step.children ? [...step.children] : undefined })));
@@ -214,16 +219,21 @@ export async function rehearse(args: {
   const messages: ModelMessage[] = [...args.history, { role: "user", content: args.userText }];
   let text = "";
   const tools = playTools(args.config, args.agent);
+  const limit = stepLimit(args.agent);
+  const loopId = args.agent.loops[0]?.nodeId ?? args.agent.nodeId;
+  const stopOnBlocker = args.agent.loops[0]?.stopOnBlocker ?? false;
+  const timeout = args.agent.sandboxes[0]?.timeoutSeconds;
   let hops = 0;
+  let stoppedOnBlocker = false;
 
-  while (hops < STEP_CAP) {
+  while (hops < limit && !stoppedOnBlocker) {
     hops += 1;
     args.onActive(args.agent.model?.nodeId ?? args.agent.nodeId, args.agent.model ? edgeBetween(args.edges, args.agent.nodeId, args.agent.model.nodeId) : null);
     const hop = await modelHop({
       provider: hopProvider,
       model: modelId,
       apiKey: args.apiKey,
-      system: systemPrompt(args.agent),
+      system: systemPrompt(args.agent, args.taskLog ?? ""),
       messages,
       tools,
       signal: args.signal,
@@ -235,8 +245,8 @@ export async function rehearse(args: {
     if (hop.toolCalls.length === 0) break;
 
     for (const call of hop.toolCalls) {
-      if (hops >= STEP_CAP) {
-        add({ id: stepId(), nodeId: args.agent.nodeId, edgeId: null, title: `Stopped after ${STEP_CAP} steps`, detail: "Send again to continue.", tone: "neutral" });
+      if (hops >= limit) {
+        add({ id: stepId(), nodeId: loopId, edgeId: null, title: `Stopped after ${limit} steps`, detail: "Send again to continue.", tone: "neutral" });
         break;
       }
       const tool = tools.find((item) => item.name === call.name);
@@ -275,8 +285,10 @@ export async function rehearse(args: {
 
       if (tool?.kind === "mcp") {
         args.onActive(tool.nodeId, edgeId);
-        add({ id: stepId(), nodeId: tool.nodeId, edgeId, title: `${call.name} · not called`, detail: "MCP servers are not called in a rehearsal.", tone: "neutral" });
-        messages.push({ role: "tool", toolCallId: call.id, name: call.name, content: "Not run in Try. MCP servers are not called." });
+        const requested = summary || call.name;
+        const result = "Not executed. MCP servers are not called in a rehearsal.";
+        add({ id: stepId(), nodeId: tool.nodeId, edgeId, title: call.name, detail: "", requested, result, tone: "neutral" });
+        messages.push({ role: "tool", toolCallId: call.id, name: call.name, content: `Requested: ${requested}\nResult: ${result}` });
         continue;
       }
 
@@ -289,43 +301,69 @@ export async function rehearse(args: {
         const gate = await runJev(decision.questions, decision.model, JSON.stringify({ tool: call.name, input: call.input }), decision.nodeId);
         if (gate.blocked) {
           blocked = true;
-          messages.push({ role: "tool", toolCallId: call.id, name: call.name, content: `Blocked. ${gate.reason}` });
+          messages.push({ role: "tool", toolCallId: call.id, name: call.name, content: `Requested: ${summary || call.name}\nResult: Refused before execution. ${gate.reason}` });
+          if (stopOnBlocker) stoppedOnBlocker = true;
           break;
         }
       }
-      if (blocked) continue;
+      if (blocked) {
+        if (stoppedOnBlocker) break;
+        continue;
+      }
 
       const verdict = toolVerdict(args.agent, call.name, typeof call.input.command === "string" ? call.input.command : "");
+      const requested = summary || verdict.label;
+      const timeoutNote = timeout ? ` A sandbox would stop it after ${timeout}s.` : "";
       args.onActive(verdict.nodeId ?? tool?.nodeId ?? args.agent.nodeId, edgeId);
       if (verdict.verdict === "deny") {
-        add({ id: stepId(), nodeId: verdict.nodeId, edgeId, title: verdict.label, detail: summary || "The harness refused this.", tone: "deny" });
-        messages.push({ role: "tool", toolCallId: call.id, name: call.name, content: `Blocked. ${verdict.label}` });
+        const result = `Refused before execution. ${verdict.label}`;
+        add({ id: stepId(), nodeId: verdict.nodeId, edgeId, title: verdict.label, detail: "", requested, result, tone: "deny" });
+        messages.push({ role: "tool", toolCallId: call.id, name: call.name, content: `Requested: ${requested}\nResult: ${result}` });
+        if (stopOnBlocker) stoppedOnBlocker = true;
       } else if (verdict.verdict === "ask") {
-        const pending = add({ id: stepId(), nodeId: verdict.nodeId, edgeId, title: `${verdict.label} · waiting for you`, detail: summary || "Approve or deny this.", tone: "ask", pending: true, asked: true });
+        const pending = add({
+          id: stepId(),
+          nodeId: verdict.nodeId,
+          edgeId,
+          title: `${verdict.label} · waiting for you`,
+          detail: "",
+          requested,
+          result: "Waiting for you to approve or deny.",
+          tone: "ask",
+          pending: true,
+          asked: true,
+        });
         const choice = await args.onAsk(pending);
         pending.pending = false;
-        pending.title = choice === "approve" ? `${verdict.label} · approved, not run in Try` : `You denied ${verdict.label}`;
+        pending.title = choice === "approve" ? verdict.label : `You denied ${verdict.label}`;
         pending.tone = choice === "approve" ? "allow" : "deny";
-        pending.detail = choice === "approve" ? summary || "Approved. Nothing was actually run." : "You denied this.";
+        pending.result = choice === "approve" ? `Approved, then not executed.${timeoutNote}` : "You denied this before it ran.";
         publish();
         messages.push({
           role: "tool",
           toolCallId: call.id,
           name: call.name,
-          content: choice === "approve" ? "Not run in Try. The person approved it, but this rehearsal does not run tools." : "The person denied this.",
+          content: `Requested: ${requested}\nResult: ${pending.result}`,
         });
+        if (choice === "deny" && stopOnBlocker) stoppedOnBlocker = true;
       } else {
-        add({ id: stepId(), nodeId: verdict.nodeId ?? tool?.nodeId ?? null, edgeId, title: `${verdict.label} · not run in Try`, detail: summary, tone: "allow" });
-        messages.push({ role: "tool", toolCallId: call.id, name: call.name, content: "Not run in Try. This rehearsal does not read files, run commands, or fetch pages." });
+        const result = `Not executed. This rehearsal does not read files, run commands, or fetch pages.${timeoutNote}`;
+        add({ id: stepId(), nodeId: verdict.nodeId ?? tool?.nodeId ?? null, edgeId, title: verdict.label, detail: "", requested, result, tone: "allow" });
+        messages.push({ role: "tool", toolCallId: call.id, name: call.name, content: `Requested: ${requested}\nResult: ${result}` });
       }
       for (const hook of matchingHooks(args.agent, "postToolUse", builtin)) {
         add({ id: stepId(), nodeId: hook.nodeId, edgeId: edgeBetween(args.edges, args.agent.nodeId, hook.nodeId), title: `${hook.name} would run`, detail: hook.command, tone: "neutral" });
       }
+      if (stoppedOnBlocker) break;
     }
   }
 
-  if (hops >= STEP_CAP && messages.at(-1)?.role === "assistant" && (messages.at(-1) as { toolCalls?: unknown[] }).toolCalls?.length) {
-    add({ id: stepId(), nodeId: args.agent.nodeId, edgeId: null, title: `Stopped after ${STEP_CAP} steps`, detail: "Send again to continue.", tone: "neutral" });
+  if (stoppedOnBlocker) {
+    add({ id: stepId(), nodeId: loopId, edgeId: null, title: "Stopped on a blocker", detail: "The loop is set to stop when an action is refused.", tone: "neutral" });
+  }
+
+  if (hops >= limit && messages.at(-1)?.role === "assistant" && (messages.at(-1) as { toolCalls?: unknown[] }).toolCalls?.length) {
+    add({ id: stepId(), nodeId: loopId, edgeId: null, title: `Stopped after ${limit} steps`, detail: "Send again to continue.", tone: "neutral" });
   }
 
   for (const hook of matchingHooks(args.agent, "stop", null)) {
@@ -333,6 +371,25 @@ export async function rehearse(args: {
   }
   for (const decision of args.agent.decisions.filter((item) => item.event === "stop")) {
     await runJev(decision.questions, decision.model, text, decision.nodeId);
+  }
+  for (const verifier of args.agent.verifiers) {
+    const command = verifier.check === "command" ? verifier.command.trim() : "";
+    const requested = command || verifier.rubric.trim() || "Check the outcome";
+    const result = command
+      ? `Not executed. Would run \`${command}\` before treating this as done.`
+      : verifier.separateEvaluator
+        ? "Not executed. A separate evaluator would score this against the rubric."
+        : "Not executed. Would score this against the rubric.";
+    add({
+      id: stepId(),
+      nodeId: verifier.nodeId,
+      edgeId: edgeBetween(args.edges, args.agent.nodeId, verifier.nodeId),
+      title: `Verifier · ${verifier.name || "Check"}`,
+      detail: "",
+      requested,
+      result,
+      tone: "neutral",
+    });
   }
   args.onActive(null, null);
   return { text, steps, usage, messages };

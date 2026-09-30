@@ -18,6 +18,7 @@ import { makeNodeData } from "@/lib/harness/kinds";
 import { autoLayout } from "@/lib/harness/layout";
 import type { PlayStep } from "@/lib/harness/playRun";
 import type {
+  EvalScenario,
   HarnessConfig,
   HarnessEdge,
   HarnessNode,
@@ -35,6 +36,8 @@ export interface PlayTurn {
   context?: string;
   steps: PlayStep[];
   usage?: { input: number; output: number };
+  startedAt?: number;
+  finishedAt?: number;
   /** The same model with no harness, when Compare is on. */
   plain?: { text: string; usage?: { input: number; output: number }; error?: string; running?: boolean };
   effects?: string[];
@@ -68,11 +71,16 @@ interface HarnessState {
   rightTab: "inspect" | "try";
   tryUnread: boolean;
   playTurns: PlayTurn[];
+  /** Notes from earlier Try turns, so a refresh can resume. */
+  taskLog: string;
+  evalScenarios: EvalScenario[];
   playRunning: boolean;
   playActiveNodeId: string | null;
   playActiveEdgeId: string | null;
   playBaseline: HarnessConfig | null;
   tryCompare: boolean;
+  /** Pixel width of the test chat. Null keeps the default, about half the screen. */
+  tryWidth: number | null;
 
   setName: (name: string) => void;
   onNodesChange: (changes: NodeChange<HarnessNode>[]) => void;
@@ -103,9 +111,13 @@ interface HarnessState {
   pushPlayTurn: (turn: PlayTurn) => void;
   patchPlayTurn: (id: string, patch: Partial<PlayTurn>) => void;
   clearPlay: () => void;
+  appendTaskLog: (line: string) => void;
+  addEvalScenario: (name: string, prompt: string) => void;
+  removeEvalScenario: (id: string) => void;
   setPlayBaseline: (config: HarnessConfig | null) => void;
   markTryUnread: () => void;
   setTryCompare: (on: boolean) => void;
+  setTryWidth: (width: number) => void;
 }
 
 const newId = (kind: string) => `${kind}-${crypto.randomUUID().slice(0, 8)}`;
@@ -145,11 +157,14 @@ export const useHarnessStore = create<HarnessState>()(
       rightTab: "inspect",
       tryUnread: false,
       playTurns: [],
+      taskLog: "",
+      evalScenarios: [],
       playRunning: false,
       playActiveNodeId: null,
       playActiveEdgeId: null,
       playBaseline: null,
       tryCompare: true,
+      tryWidth: null,
 
       setName: (name) => set((s) => ({ ...withHistory(s, "name"), name })),
 
@@ -251,7 +266,7 @@ export const useHarnessStore = create<HarnessState>()(
         set((s) => ({
           nodes: s.nodes.map((n) => (n.selected === (n.id === id) ? n : { ...n, selected: n.id === id })),
           edges: s.edges.map((e) => (e.selected ? { ...e, selected: false } : e)),
-          ...(id && s.rightTab === "try" ? { rightTab: "inspect" as const, inspectorOpen: true } : {}),
+          ...(id ? { rightTab: "inspect" as const, inspectorOpen: true } : {}),
         })),
 
       selectAll: () => set((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) })),
@@ -310,10 +325,18 @@ export const useHarnessStore = create<HarnessState>()(
       pushPlayTurn: (turn) => set((s) => ({ playTurns: [...s.playTurns, turn] })),
       patchPlayTurn: (id, patch) =>
         set((s) => ({ playTurns: s.playTurns.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)) })),
-      clearPlay: () => set({ playTurns: [], playBaseline: null, playActiveNodeId: null, playActiveEdgeId: null, playRunning: false }),
+      clearPlay: () => set({ playTurns: [], taskLog: "", playBaseline: null, playActiveNodeId: null, playActiveEdgeId: null, playRunning: false }),
+      appendTaskLog: (line) =>
+        set((s) => ({ taskLog: [s.taskLog, line].filter(Boolean).join("\n").slice(-4000) })),
+      addEvalScenario: (name, prompt) =>
+        set((s) => ({
+          evalScenarios: [...s.evalScenarios, { id: crypto.randomUUID(), name: name.trim() || "Scenario", prompt: prompt.trim() }],
+        })),
+      removeEvalScenario: (id) => set((s) => ({ evalScenarios: s.evalScenarios.filter((scenario) => scenario.id !== id) })),
       setPlayBaseline: (playBaseline) => set({ playBaseline }),
       markTryUnread: () => set((s) => (s.rightTab === "try" ? {} : { tryUnread: true })),
       setTryCompare: (tryCompare) => set({ tryCompare }),
+      setTryWidth: (tryWidth) => set({ tryWidth }),
     }),
     {
       name: "harness-studio:v1",
@@ -333,6 +356,10 @@ export const useHarnessStore = create<HarnessState>()(
         partsPanelOpen: s.partsPanelOpen,
         inspectorOpen: s.inspectorOpen,
         tryCompare: s.tryCompare,
+        tryWidth: s.tryWidth,
+        playTurns: s.playTurns,
+        taskLog: s.taskLog,
+        evalScenarios: s.evalScenarios,
       }),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<HarnessState>;

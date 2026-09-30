@@ -65,6 +65,29 @@ describe("compileGraph", () => {
     expect(result.issues.some((issue) => issue.nodeId === "d" && /instructions/.test(issue.message))).toBe(true);
   });
 
+  it("warns when tools overlap, a writer has no verifier, or a loop never stops", () => {
+    const { nodes, edges } = buildGraph([
+      { id: "a", kind: "agent", config: { name: "Builder" } },
+      { id: "p", kind: "prompt", to: "a", config: { content: "Build it." } },
+      { id: "edit", kind: "tool", to: "a", config: { tool: "edit", mode: "allow" } },
+      { id: "edit2", kind: "tool", to: "a", config: { tool: "edit", mode: "ask" } },
+      { id: "loop", kind: "loop", to: "a", config: { maxSteps: 0 } },
+    ]);
+    const messages = compileGraph(nodes, edges).issues.map((issue) => issue.message);
+    expect(messages.some((message) => /two "Edit files"/.test(message))).toBe(true);
+    expect(messages.some((message) => /Connect a Verifier/.test(message))).toBe(true);
+    expect(messages.some((message) => /no stop/.test(message))).toBe(true);
+  });
+
+  it("keeps the investigation preset read-only and verifiable", () => {
+    const { nodes, edges } = PRESETS.find((preset) => preset.id === "investigation")!.build();
+    const result = compileGraph(nodes, edges);
+    expect(result.issues.filter((issue) => issue.severity === "error")).toEqual([]);
+    expect(result.config?.root.sandboxes[0].access).toBe("read-only");
+    expect(result.config?.root.verifiers).toHaveLength(1);
+    expect(result.config?.root.skills[0].name).toBe("Evidence");
+  });
+
   it("validates MCP servers", () => {
     const { nodes, edges } = buildGraph([
       { id: "a", kind: "agent", config: { name: "Main" } },

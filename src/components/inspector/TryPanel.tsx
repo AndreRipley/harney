@@ -10,7 +10,8 @@ import { useCanvasActions } from "@/hooks/useCanvasActions";
 import { PROVIDER_LABELS } from "@/lib/harness/kinds";
 import { changeSummary, harnessEffects, requiredKeys, starterPrompts } from "@/lib/harness/play";
 import { type ModelMessage, type PlayStep, plainReply, rehearse } from "@/lib/harness/playRun";
-import { EMPTY_KEYS, keyField, loadTryKeys, saveTryKeys, type TryKeys } from "@/lib/harness/tryKeys";
+import { harnessMetrics, sessionNote, wrapUntrusted } from "@/lib/harness/runtime";
+import { EMPTY_KEYS, keyField, keyProblem, loadTryKeys, saveTryKeys, type TryKeys } from "@/lib/harness/tryKeys";
 import type { HarnessConfig, Provider } from "@/lib/harness/types";
 import { cn } from "@/lib/utils";
 import { type PlayTurn, useCompiled, useHarnessStore } from "@/store/harnessStore";
@@ -40,6 +41,18 @@ function StepList({ steps, onFocus, onDecide }: { steps: PlayStep[]; onFocus: (s
             className={cn("w-full rounded-md border px-2 py-1.5 text-left", TONE[step.tone])}
           >
             <div className="text-xs font-medium">{step.title}</div>
+            {step.requested && (
+              <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                <span className="font-medium text-foreground">Requested. </span>
+                {step.requested}
+              </div>
+            )}
+            {step.result && (
+              <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                <span className="font-medium text-foreground">Result. </span>
+                {step.result}
+              </div>
+            )}
             {step.detail && <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{step.detail}</div>}
           </button>
           {step.pending && (
@@ -90,6 +103,74 @@ function SetupRow({ done, optional, label, detail, children }: { done: boolean; 
         {children}
       </div>
     </li>
+  );
+}
+
+function Metrics({ turns }: { turns: PlayTurn[] }) {
+  const metrics = harnessMetrics(turns);
+  if (metrics.runs === 0) return null;
+  const items = [
+    ["Verified", metrics.verifiedCompletion],
+    ["Corrections", metrics.humanCorrection],
+    ["Refused", metrics.unauthorized],
+    ["Time", metrics.time],
+    ["Tokens / success", metrics.tokensPerSuccess],
+  ] as const;
+  return (
+    <dl className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg border px-2.5 py-2 text-[11px] sm:grid-cols-5" aria-label="Rehearsal measurements">
+      {items.map(([label, value]) => (
+        <div key={label}>
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className="font-medium" title={label === "Tokens / success" ? "Token count stands in for cost in this rehearsal." : undefined}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function Scenarios({ running, onRun }: { running: boolean; onRun: (prompt: string) => void }) {
+  const scenarios = useHarnessStore((s) => s.evalScenarios);
+  const addEvalScenario = useHarnessStore((s) => s.addEvalScenario);
+  const removeEvalScenario = useHarnessStore((s) => s.removeEvalScenario);
+  const [name, setName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  return (
+    <details className="rounded-lg border px-2.5 py-2 text-xs">
+      <summary className="cursor-pointer font-medium">Scenarios</summary>
+      <div className="mt-2 grid gap-2">
+        {scenarios.length === 0 && <p className="text-muted-foreground">Save a prompt and replay it after you change the harness.</p>}
+        <ul className="grid gap-1">
+          {scenarios.map((scenario) => (
+            <li key={scenario.id} className="flex items-center gap-2">
+              <button type="button" disabled={running} className="min-w-0 flex-1 truncate text-left hover:underline disabled:opacity-50" onClick={() => onRun(scenario.prompt)}>
+                {scenario.name}
+              </button>
+              <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={`Remove ${scenario.name}`} onClick={() => removeEvalScenario(scenario.id)}>
+                <X className="size-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+        <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" aria-label="Scenario name" className="h-8 text-xs" />
+        <Textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="The message to replay" aria-label="Scenario prompt" rows={2} className="text-xs" />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="justify-self-start"
+          disabled={!prompt.trim()}
+          onClick={() => {
+            addEvalScenario(name, prompt);
+            setName("");
+            setPrompt("");
+          }}
+        >
+          Save scenario
+        </Button>
+      </div>
+    </details>
   );
 }
 
@@ -222,7 +303,7 @@ function Column({
         {tokens > 0 && <span className="ml-auto shrink-0 font-normal normal-case tracking-normal tabular-nums">{tokens} tokens</span>}
       </header>
       {error ? (
-        <p className="text-xs text-destructive">{error}</p>
+        <p className="text-xs leading-snug text-destructive">{error}</p>
       ) : text ? (
         <p className="whitespace-pre-wrap break-words text-sm leading-snug">{text}</p>
       ) : (
@@ -452,6 +533,20 @@ function endRun(controller: AbortController) {
   if (session.abort === controller) session.abort = null;
 }
 
+function historyFromTurns(turns: PlayTurn[], untrusted: boolean): ModelMessage[] {
+  const messages: ModelMessage[] = [];
+  for (const turn of turns) {
+    if (turn.role === "user") {
+      const pasted = turn.context?.trim();
+      const content = pasted ? `${turn.text}\n\n${untrusted ? wrapUntrusted(pasted) : `Pasted context:\n${pasted}`}` : turn.text;
+      messages.push({ role: "user", content });
+    } else if (turn.role === "assistant" && turn.text.trim() && !turn.error) {
+      messages.push({ role: "assistant", content: turn.text });
+    }
+  }
+  return messages;
+}
+
 /** Rehearse the harness live, next to the same model with no harness. */
 export function TryPanel({ stacked = false }: { stacked?: boolean }) {
   const { config, rootId } = useCompiled();
@@ -466,6 +561,8 @@ export function TryPanel({ stacked = false }: { stacked?: boolean }) {
   const setPlayHighlight = useHarnessStore((s) => s.setPlayHighlight);
   const setPlayBaseline = useHarnessStore((s) => s.setPlayBaseline);
   const clearPlay = useHarnessStore((s) => s.clearPlay);
+  const taskLog = useHarnessStore((s) => s.taskLog);
+  const appendTaskLog = useHarnessStore((s) => s.appendTaskLog);
   const markTryUnread = useHarnessStore((s) => s.markTryUnread);
   const { revealNode } = useCanvasActions();
   const [keys, setKeys] = useState<TryKeys>(() => (typeof window === "undefined" ? EMPTY_KEYS : loadTryKeys()));
@@ -516,18 +613,28 @@ export function TryPanel({ stacked = false }: { stacked?: boolean }) {
     const pasted = context.trim();
     if (!config || !model || !provider || !ready || !text || running) return;
     setSetupOpen(false);
+    const problem = keyProblem(provider, model.modelId, keys[provider]);
     const withPlain = compare;
     const replyId = crypto.randomUUID();
     pushPlayTurn({ id: crypto.randomUUID(), role: "user", text, context: pasted || undefined, steps: [] });
     pushPlayTurn({ id: replyId, role: "assistant", text: "", steps: [], plain: withPlain ? { text: "", running: true } : undefined });
+    if (problem) {
+      patchPlayTurn(replyId, { error: problem, plain: withPlain ? { text: "", error: problem } : undefined });
+      markTryUnread();
+      return;
+    }
     setPlayRunning(true);
     setPlayBaseline(config);
+    const startedAt = Date.now();
+    patchPlayTurn(replyId, { startedAt });
     const controller = beginRun();
-    const userText = pasted ? `${text}\n\nPasted context:\n${pasted}` : text;
+    const untrusted = config.root.contexts.length === 0 || config.root.contexts[0].treatAsUntrusted;
+    if (session.harness.length === 0) session.harness = historyFromTurns(useHarnessStore.getState().playTurns.slice(0, -2), untrusted);
+    const userText = pasted ? `${text}\n\n${untrusted ? wrapUntrusted(pasted) : `Pasted context:\n${pasted}`}` : text;
     const reply = () => useHarnessStore.getState().playTurns.find((turn) => turn.id === replyId);
 
     const plainSide = withPlain
-      ? plainReply({ provider, modelId: model.modelId, apiKey: keys[provider], history: session.plain, userText, signal: controller.signal })
+      ? plainReply({ provider, modelId: model.modelId, apiKey: keys[provider].trim(), history: session.plain, userText, signal: controller.signal })
           .then((result) => {
             session.plain = result.messages;
             patchPlayTurn(replyId, { plain: { text: result.text, usage: result.usage } });
@@ -542,10 +649,11 @@ export function TryPanel({ stacked = false }: { stacked?: boolean }) {
       agent: config.root,
       history: session.harness,
       userText,
-      apiKey: keys[provider],
+      apiKey: keys[provider].trim(),
       jevKey: keys.jev,
       edges: useHarnessStore.getState().edges,
       signal: controller.signal,
+      taskLog: useHarnessStore.getState().taskLog,
       onText: (reply) => patchPlayTurn(replyId, { text: reply }),
       onSteps: (steps) => patchPlayTurn(replyId, { steps }),
       onAsk: (step) =>
@@ -556,11 +664,15 @@ export function TryPanel({ stacked = false }: { stacked?: boolean }) {
     })
       .then((result) => {
         session.harness = result.messages;
-        patchPlayTurn(replyId, { text: result.text, steps: result.steps, usage: result.usage, effects: harnessEffects(config, result.steps) });
+        patchPlayTurn(replyId, { text: result.text, steps: result.steps, usage: result.usage, effects: harnessEffects(config, result.steps), finishedAt: Date.now() });
+        appendTaskLog(sessionNote(result.text, result.steps));
       })
       .catch((err) => {
-        if (controller.signal.aborted) patchPlayTurn(replyId, { text: reply()?.text || "Stopped." });
-        else patchPlayTurn(replyId, { error: errorText(err) });
+        if (controller.signal.aborted) {
+          const text = reply()?.text || "Stopped.";
+          patchPlayTurn(replyId, { text, finishedAt: Date.now() });
+          appendTaskLog(sessionNote(text, reply()?.steps ?? []));
+        } else patchPlayTurn(replyId, { error: errorText(err), finishedAt: Date.now() });
       });
 
     await Promise.all([plainSide, harnessSide]);
@@ -589,6 +701,11 @@ export function TryPanel({ stacked = false }: { stacked?: boolean }) {
               </button>
             </span>
           )}
+          {turns.length > 0 && !running && (
+            <Button type="button" size="xs" variant="ghost" onClick={() => void send("Continue from the saved progress. Pick up anything still unfinished.")}>
+              Resume
+            </Button>
+          )}
           {turns.length > 0 && (
             <Button
               type="button"
@@ -609,6 +726,11 @@ export function TryPanel({ stacked = false }: { stacked?: boolean }) {
       <div ref={scroller} className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-3 py-3" aria-live="polite">
         {setupOpen && (
           <TrySetup config={config} rootId={rootId} keys={keys} needs={needs} ready={ready} onKeys={updateKeys} onDone={() => setSetupOpen(false)} />
+        )}
+        {config && <Scenarios running={running} onRun={(prompt) => void send(prompt)} />}
+        {ready && <Metrics turns={turns} />}
+        {ready && taskLog && rows.length === 0 && (
+          <p className="text-xs text-muted-foreground">Saved progress is still here. Resume picks up from it.</p>
         )}
         {ready && rows.length === 0 && (
           <div className="grid gap-2">
@@ -660,11 +782,78 @@ export function TryPanel({ stacked = false }: { stacked?: boolean }) {
   );
 }
 
+const TRY_MIN_WIDTH = 360;
+
+function tryMaxWidth(viewport: number) {
+  return Math.max(TRY_MIN_WIDTH, viewport - 280);
+}
+
+function clampTryWidth(width: number) {
+  return Math.round(Math.min(Math.max(width, TRY_MIN_WIDTH), tryMaxWidth(window.innerWidth)));
+}
+
 /** The chat's own right-hand panel. It takes the Inspector's place while open. */
 export function TryDock({ className }: { className?: string }) {
   const closeTry = useHarnessStore((s) => s.closeTry);
+  const storedWidth = useHarnessStore((s) => s.tryWidth);
+  const setTryWidth = useHarnessStore((s) => s.setTryWidth);
+  const aside = useRef<HTMLElement>(null);
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  const [viewport, setViewport] = useState(0);
+
+  useEffect(() => {
+    const update = () => setViewport(window.innerWidth);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const width = storedWidth == null || viewport === 0 ? null : Math.min(storedWidth, tryMaxWidth(viewport));
+
+  const resizeBy = (delta: number) => {
+    const current = aside.current?.getBoundingClientRect().width ?? TRY_MIN_WIDTH;
+    setTryWidth(clampTryWidth(current + delta));
+  };
+
   return (
-    <aside id="try-panel" aria-label="Test your harness" className={cn("w-[min(50vw,56rem)] shrink-0 flex-col overflow-hidden border-l bg-background", className)}>
+    <aside
+      ref={aside}
+      id="try-panel"
+      aria-label="Test your harness"
+      style={width == null ? undefined : { width }}
+      className={cn("relative shrink-0 flex-col overflow-hidden border-l bg-background", width == null && "w-[min(50vw,56rem)]", className)}
+    >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize test chat"
+        aria-valuemin={TRY_MIN_WIDTH}
+        aria-valuemax={viewport ? tryMaxWidth(viewport) : undefined}
+        aria-valuenow={width ?? undefined}
+        tabIndex={0}
+        title="Drag to resize"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          drag.current = { x: event.clientX, width: aside.current?.getBoundingClientRect().width ?? TRY_MIN_WIDTH };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (!drag.current) return;
+          setTryWidth(clampTryWidth(drag.current.width + drag.current.x - event.clientX));
+        }}
+        onPointerUp={() => {
+          drag.current = null;
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          resizeBy(event.key === "ArrowLeft" ? 32 : -32);
+        }}
+        onPointerCancel={() => {
+          drag.current = null;
+        }}
+        className="absolute inset-y-0 left-0 z-20 w-2 -translate-x-1/2 cursor-col-resize touch-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border hover:after:w-0.5 hover:after:bg-indigo-500 focus-visible:outline-none focus-visible:after:w-0.5 focus-visible:after:bg-indigo-500"
+      />
       <div className="flex items-center gap-2 border-b py-1.5 pr-2 pl-4">
         <MessagesSquare className="size-4 text-indigo-500" aria-hidden />
         <h2 className="text-sm font-semibold">Test your harness</h2>

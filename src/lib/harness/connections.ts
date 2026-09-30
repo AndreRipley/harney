@@ -187,13 +187,21 @@ function resolvePart(
   const already = edges.some((e) => isPartsEdge(e) && e.source === part.id && e.target === agent.id);
   if (already) return fail("These cards are already connected.");
 
-  if (part.data.kind === "model") {
-    const hasModel = edges.some(
-      (e) => isPartsEdge(e) && e.target === agent.id && nodes.find((n) => n.id === e.source)?.data.kind === "model",
+  const oneEach: Partial<Record<typeof part.data.kind, string>> = {
+    model: "a model",
+    loop: "a loop",
+    context: "a context",
+    progress: "a progress record",
+    sandbox: "a sandbox",
+  };
+  const alone = oneEach[part.data.kind];
+  if (alone) {
+    const hasOne = edges.some(
+      (e) => isPartsEdge(e) && e.target === agent.id && nodes.find((n) => n.id === e.source)?.data.kind === part.data.kind,
     );
-    if (hasModel) {
+    if (hasOne) {
       return fail(
-        `${nodeTitle(agent.data)} already has a model. An agent can only have one; remove the current connection first.`,
+        `${nodeTitle(agent.data)} already has ${alone}. An agent can only have one; remove the current connection first.`,
       );
     }
   }

@@ -7,10 +7,13 @@ import type {
   HookEvent,
   HookScope,
   KindDataMap,
+  LoopMode,
   NodeKind,
   Provider,
   ReasoningEffort,
+  SandboxAccess,
   ToolMode,
+  VerifierCheck,
 } from "./types";
 
 export type KindGroup = "core" | "capabilities" | "guardrails";
@@ -41,6 +44,12 @@ export const KIND_META: Record<NodeKind, KindMeta> = {
     group: "core",
     color: "#3b82f6",
   },
+  loop: {
+    label: "Loop",
+    blurb: "When the agent keeps going, and when it must stop.",
+    group: "core",
+    color: "#0284c7",
+  },
   tool: {
     label: "Tool",
     blurb: "A built-in ability: reading, editing, shell, web.",
@@ -52,6 +61,24 @@ export const KIND_META: Record<NodeKind, KindMeta> = {
     blurb: "An external service the agent can use, like GitHub.",
     group: "capabilities",
     color: "#06b6d4",
+  },
+  skill: {
+    label: "Skill",
+    blurb: "Instructions loaded only when the task needs them.",
+    group: "capabilities",
+    color: "#db2777",
+  },
+  context: {
+    label: "Context",
+    blurb: "What the model sees on a turn, and how much.",
+    group: "capabilities",
+    color: "#c026d3",
+  },
+  progress: {
+    label: "Progress",
+    blurb: "The objective, checklist and notes a later session can resume.",
+    group: "capabilities",
+    color: "#65a30d",
   },
   rule: {
     label: "Rule",
@@ -65,6 +92,12 @@ export const KIND_META: Record<NodeKind, KindMeta> = {
     group: "guardrails",
     color: "#f43f5e",
   },
+  sandbox: {
+    label: "Sandbox",
+    blurb: "Where actions run, and how long they may take.",
+    group: "guardrails",
+    color: "#b45309",
+  },
   hook: {
     label: "Hook",
     blurb: "A command that runs automatically at a set moment.",
@@ -77,18 +110,30 @@ export const KIND_META: Record<NodeKind, KindMeta> = {
     group: "guardrails",
     color: "#0891b2",
   },
+  verifier: {
+    label: "Verifier",
+    blurb: "A check that the outcome happened, separate from the agent saying so.",
+    group: "guardrails",
+    color: "#059669",
+  },
 };
 
 export const KIND_ORDER: NodeKind[] = [
   "agent",
   "model",
   "prompt",
+  "loop",
   "tool",
   "mcp",
+  "skill",
+  "context",
+  "progress",
   "rule",
   "policy",
+  "sandbox",
   "hook",
   "decision",
+  "verifier",
 ];
 
 export const GROUP_LABELS: Record<KindGroup, string> = {
@@ -165,6 +210,21 @@ export function defaultDecisionQuestion(): DecisionQuestion {
   };
 }
 
+export const LOOP_MODE_LABELS: Record<LoopMode, string> = {
+  workflow: "Fixed sequence",
+  autonomous: "Choose each step",
+};
+
+export const SANDBOX_ACCESS_LABELS: Record<SandboxAccess, string> = {
+  "read-only": "Read only",
+  workspace: "Workspace write",
+};
+
+export const VERIFIER_CHECK_LABELS: Record<VerifierCheck, string> = {
+  command: "Run a command",
+  rubric: "Score a rubric",
+};
+
 export const HOOK_SCOPE_LABELS: Record<HookScope, string> = {
   any: "Any tool",
   shell: "Shell commands",
@@ -185,6 +245,17 @@ export function defaultConfig<K extends NodeKind>(kind: K): KindDataMap[K] {
       reasoningEffort: "default",
     },
     prompt: { title: "Instructions", content: "" },
+    loop: { name: "Loop", mode: "autonomous", maxSteps: 8, stopOnBlocker: true },
+    context: {
+      name: "Context",
+      budgetChars: 8000,
+      compactHistory: true,
+      alwaysLoad: [],
+      onDemand: [],
+      treatAsUntrusted: true,
+    },
+    progress: { name: "Progress", objective: "", checklist: [], notes: "" },
+    skill: { name: "New skill", description: "", content: "" },
     tool: { tool: "read", mode: "allow" },
     mcp: {
       name: "",
@@ -203,7 +274,9 @@ export function defaultConfig<K extends NodeKind>(kind: K): KindDataMap[K] {
       allowNetwork: true,
       allowedDomains: [],
     },
+    sandbox: { name: "Sandbox", access: "workspace", timeoutSeconds: 30 },
     hook: { name: "New hook", event: "postToolUse", scope: "edit", command: "" },
+    verifier: { name: "Verifier", check: "command", command: "", rubric: "", separateEvaluator: true },
     decision: {
       name: "Jev gate",
       model: "jev-latest",
@@ -236,6 +309,14 @@ export function nodeTitle(data: HarnessNodeData): string {
       return data.config.modelId || "No model chosen";
     case "prompt":
       return data.config.title || "Instructions";
+    case "loop":
+      return data.config.name || "Loop";
+    case "context":
+      return data.config.name || "Context";
+    case "progress":
+      return data.config.name || "Progress";
+    case "skill":
+      return data.config.name || "Unnamed skill";
     case "tool":
       return TOOL_LABELS[data.config.tool];
     case "mcp":
@@ -244,10 +325,14 @@ export function nodeTitle(data: HarnessNodeData): string {
       return data.config.name || "Unnamed rule";
     case "policy":
       return data.config.name || "Permissions";
+    case "sandbox":
+      return data.config.name || "Sandbox";
     case "hook":
       return data.config.name || "Unnamed hook";
     case "decision":
       return data.config.name || "Jev";
+    case "verifier":
+      return data.config.name || "Verifier";
   }
 }
 
@@ -265,6 +350,17 @@ export function nodeSummary(data: HarnessNodeData): string {
     }
     case "prompt":
       return truncate(data.config.content) || "Empty. Click to write instructions";
+    case "loop":
+      return `${LOOP_MODE_LABELS[data.config.mode]} · ${data.config.maxSteps} steps`;
+    case "context": {
+      const count = data.config.alwaysLoad.length + data.config.onDemand.length;
+      const budget = `${data.config.budgetChars.toLocaleString()} character budget`;
+      return count ? `${budget} · ${count} sources` : budget;
+    }
+    case "progress":
+      return truncate(data.config.objective) || "No objective yet";
+    case "skill":
+      return truncate(data.config.description) || "Load when the task needs it";
     case "tool":
       return TOOL_MODE_LABELS[data.config.mode];
     case "mcp": {
@@ -284,6 +380,8 @@ export function nodeSummary(data: HarnessNodeData): string {
       parts.push(allowNetwork ? "network on" : "network off");
       return parts.join(" · ");
     }
+    case "sandbox":
+      return `${SANDBOX_ACCESS_LABELS[data.config.access]} · ${data.config.timeoutSeconds}s`;
     case "hook": {
       const { event, scope, command } = data.config;
       const when = isToolEvent(event)
@@ -291,6 +389,10 @@ export function nodeSummary(data: HarnessNodeData): string {
         : HOOK_EVENT_LABELS[event];
       return command ? `${when}: ${truncate(command, 40)}` : when;
     }
+    case "verifier":
+      return data.config.check === "command"
+        ? truncate(data.config.command) || "No command yet"
+        : truncate(data.config.rubric) || "No rubric yet";
     case "decision": {
       const { event, scope, questions, model } = data.config;
       const when =

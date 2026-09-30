@@ -151,6 +151,12 @@ export const PRESETS: Preset[] = [
             to: "agent",
             config: { name: "Lint after edits", event: "postToolUse", scope: "edit", command: "npm run lint --silent" },
           },
+          {
+            id: "verifier",
+            kind: "verifier",
+            to: "agent",
+            config: { name: "Tests pass", check: "command", command: "npm test", separateEvaluator: true },
+          },
         ],
         uid(),
       ),
@@ -239,6 +245,96 @@ export const PRESETS: Preset[] = [
               alwaysApply: false,
               globs: ["**/*.test.ts", "**/*.test.tsx"],
               content: "Use describe/it blocks. One behavior per test. No snapshot tests for logic.",
+            },
+          },
+        ],
+        uid(),
+      ),
+  },
+  {
+    id: "investigation",
+    name: "Transaction investigation",
+    description: "One agent, read-only tools, saved progress, and a check that the explanation cites evidence.",
+    build: () =>
+      buildGraph(
+        [
+          {
+            id: "agent",
+            kind: "agent",
+            config: {
+              name: "Investigator",
+              description: "Investigates a failed customer transaction and cites the evidence.",
+            },
+          },
+          { id: "model", kind: "model", to: "agent", config: { provider: "anthropic", modelId: "sonnet" } },
+          {
+            id: "prompt",
+            kind: "prompt",
+            to: "agent",
+            config: {
+              title: "How to investigate",
+              content:
+                "Find what happened to the transaction. Read the record and the operating procedure before you explain it.\n\nEvery claim needs the record it came from. If you cannot find it, say what is still unknown. Do not change the transaction.",
+            },
+          },
+          { id: "read", kind: "tool", to: "agent", config: { tool: "read", mode: "allow" } },
+          { id: "edit", kind: "tool", to: "agent", config: { tool: "edit", mode: "deny" } },
+          { id: "shell", kind: "tool", to: "agent", config: { tool: "shell", mode: "deny" } },
+          {
+            id: "loop",
+            kind: "loop",
+            to: "agent",
+            config: { name: "Investigation loop", mode: "autonomous", maxSteps: 8, stopOnBlocker: true },
+          },
+          {
+            id: "context",
+            kind: "context",
+            to: "agent",
+            config: {
+              name: "Case file",
+              budgetChars: 6000,
+              compactHistory: true,
+              alwaysLoad: [],
+              onDemand: ["Transaction record", "Operating procedure"],
+              treatAsUntrusted: true,
+            },
+          },
+          {
+            id: "progress",
+            kind: "progress",
+            to: "agent",
+            config: {
+              name: "Case progress",
+              objective: "Explain the failed transaction with evidence.",
+              checklist: ["Retrieve the transaction", "Read the operating procedure", "Record unresolved questions", "Cite evidence for the explanation"],
+              notes: "",
+            },
+          },
+          {
+            id: "sandbox",
+            kind: "sandbox",
+            to: "agent",
+            config: { name: "Read-only case", access: "read-only", timeoutSeconds: 20 },
+          },
+          {
+            id: "skill",
+            kind: "skill",
+            to: "agent",
+            config: {
+              name: "Evidence",
+              description: "Load when citing a finding.",
+              content: "Every claim needs the record it came from. Quote the field, not a paraphrase, and say what is still unknown.",
+            },
+          },
+          {
+            id: "verifier",
+            kind: "verifier",
+            to: "agent",
+            config: {
+              name: "Evidence check",
+              check: "rubric",
+              rubric: "The explanation names the transaction, cites a procedure, and says what is still unknown.",
+              separateEvaluator: true,
             },
           },
         ],

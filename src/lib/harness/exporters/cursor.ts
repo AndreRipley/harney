@@ -1,4 +1,5 @@
 import { allAgents, projectHooks, projectMcpServers } from "../compile";
+import { progressPathFor, renderRuntime, runtimeFiles, verifierCommands } from "../runtime";
 import { buildDecisionExport, cursorDecisionEvent } from "./decisions";
 import { slugify } from "../kinds";
 import type { ExportFile, Feature, HarnessConfig, HookData, TargetNote } from "../types";
@@ -26,6 +27,12 @@ export const CURSOR_SUPPORT: Record<Feature, FeatureSupport> = {
   hooks: { level: "partial", note: "Written to .cursor/hooks.json. Some moments have no Cursor equivalent." },
   decisions: { level: "partial", note: "Runs as a Cursor hook that asks Jev. A decision on file edits has no matching moment, so it's left out." },
   subagents: { level: "partial", note: "Each subagent becomes a rule Cursor pulls in when its description matches." },
+  loop: { level: "partial", note: "Written into the rule text as a step limit. Cursor does not enforce the cap." },
+  context: { level: "partial", note: "Written into the rule text. Cursor does not trim context for you." },
+  progress: { level: "full", note: "PROGRESS.md holds the objective, checklist and notes. The rule tells the agent to update it." },
+  skill: { level: "partial", note: "Written to .cursor/skills. Cursor does not load that folder on its own; the rule text tells the agent when to read it." },
+  sandbox: { level: "partial", note: "Written into the rule text. Cursor project files cannot enforce a sandbox." },
+  verifier: { level: "partial", note: "A command check becomes a stop hook. A rubric is written into the rule. A separate evaluator is an instruction, not a second process." },
 };
 
 function mdc(frontmatter: { description: string; globs?: string[]; alwaysApply: boolean }, body: string) {
@@ -65,7 +72,7 @@ export function buildCursor(config: HarnessConfig): { files: ExportFile[]; notes
     path: `.cursor/rules/${rootFile}.mdc`,
     content: mdc(
       { description: root.description || `Core instructions for ${root.name}`, alwaysApply: true },
-      joinSections(`# ${root.name}`, renderInstructions(root)),
+      joinSections(`# ${root.name}`, renderInstructions(root), renderRuntime(root, { progressPath: progressPathFor(root, true) })),
     ),
     description: `${root.name}'s main instructions. Always applied to every chat.`,
   });
@@ -98,7 +105,7 @@ export function buildCursor(config: HarnessConfig): { files: ExportFile[]; notes
       path: `.cursor/rules/${name(`agent-${sub.slug}`)}.mdc`,
       content: mdc(
         { description: `Act as ${sub.name}: ${sub.description || sub.name}`, alwaysApply: false },
-        joinSections(`# ${sub.name}`, sub.description, renderInstructions(sub)),
+        joinSections(`# ${sub.name}`, sub.description, renderInstructions(sub), renderRuntime(sub, { progressPath: progressPathFor(sub, false) })),
       ),
       description: `${sub.name}'s instructions as a rule. Cursor pulls it in when a request matches, or when you mention @${sub.slug}.`,
     });
@@ -149,6 +156,11 @@ export function buildCursor(config: HarnessConfig): { files: ExportFile[]; notes
     (hooks[event] ??= []).push({ command: decision.command });
   }
   skipped.push(...decisions.skipped);
+  for (const check of allAgents(config).flatMap(verifierCommands)) {
+    (hooks.stop ??= []).push({ command: check.command });
+  }
+  files.push(...runtimeFiles(root, "cursor", progressPathFor(root, true)));
+  for (const sub of subagents) files.push(...runtimeFiles(sub, "cursor", progressPathFor(sub, false)));
   if (Object.keys(hooks).length) {
     files.push({
       path: ".cursor/hooks.json",

@@ -1,4 +1,5 @@
-import { projectHooks, projectMcpServers, projectPolicy, toolModes } from "../compile";
+import { allAgents, projectHooks, projectMcpServers, projectPolicy, toolModes } from "../compile";
+import { progressPathFor, renderRuntime, runtimeFiles, verifierCommands } from "../runtime";
 import { buildDecisionExport, type DecisionHookEntry } from "./decisions";
 import { PROVIDER_LABELS } from "../kinds";
 import type {
@@ -35,6 +36,12 @@ export const CLAUDE_SUPPORT: Record<Feature, FeatureSupport> = {
   hooks: { level: "full", note: "Written to hooks in .claude/settings.json." },
   decisions: { level: "full", note: "A hook runs a script that asks Jev. Set TYPESAFE_API_KEY; the key is never written into the files." },
   subagents: { level: "full", note: "Each subagent gets a file in .claude/agents/." },
+  loop: { level: "partial", note: "Written into the instructions as a step limit. Claude Code does not enforce the cap." },
+  context: { level: "partial", note: "Written into the instructions: what to load, the size budget, and that pasted content is untrusted. Claude Code does not trim context for you." },
+  progress: { level: "full", note: "PROGRESS.md holds the objective, checklist and notes. The instructions tell the agent to update it." },
+  skill: { level: "full", note: "Written to .claude/skills and listed in CLAUDE.md as load-on-demand." },
+  sandbox: { level: "partial", note: "Written into CLAUDE.md. Claude's permission rules still come from the tool and policy cards." },
+  verifier: { level: "partial", note: "A command check becomes a Stop hook. A rubric is written into CLAUDE.md. A separate evaluator is an instruction, not a second process." },
 };
 
 const PERMISSION_NAMES: Record<BuiltinTool, string> = {
@@ -134,6 +141,9 @@ function buildSettings(config: HarnessConfig, notes: TargetNote[], decisions: De
     group.hooks = [{ type: "command", command: decision.command }];
     (hooks[event] ??= []).push(group);
   }
+  for (const check of allAgents(config).flatMap(verifierCommands)) {
+    (hooks[HOOK_EVENTS.stop] ??= []).push({ hooks: [{ type: "command", command: check.command }] });
+  }
   if (Object.keys(hooks).length) settings.hooks = hooks;
 
   return Object.keys(settings).length > 1 ? settings : null;
@@ -174,7 +184,11 @@ function buildSubagentFile(agent: CompiledAgent, notes: TargetNote[]): ExportFil
   const model = claudeModel(agent, notes);
   if (model) frontmatter.push(`model: ${model}`);
 
-  const body = joinSections(renderInstructions(agent), renderRulesSection(agent.rules));
+  const body = joinSections(
+    renderInstructions(agent),
+    renderRulesSection(agent.rules),
+    renderRuntime(agent, { progressPath: progressPathFor(agent, false) }),
+  );
   return {
     path: `.claude/agents/${agent.slug}.md`,
     content: `---\n${frontmatter.join("\n")}\n---\n\n${body}`,
@@ -202,6 +216,7 @@ export function buildClaudeCode(config: HarnessConfig): { files: ExportFile[]; n
       root.description,
       renderInstructions(root),
       renderRulesSection(root.rules),
+      renderRuntime(root, { progressPath: progressPathFor(root, true) }),
       subagentList,
     ),
     description: "The instructions Claude reads at the start of every session: your prompt and rules.",
@@ -225,7 +240,11 @@ export function buildClaudeCode(config: HarnessConfig): { files: ExportFile[]; n
     });
   }
 
-  for (const sub of subagents) files.push(buildSubagentFile(sub, notes));
+  files.push(...runtimeFiles(root, "claude", progressPathFor(root, true)));
+  for (const sub of subagents) {
+    files.push(buildSubagentFile(sub, notes));
+    files.push(...runtimeFiles(sub, "claude", progressPathFor(sub, false)));
+  }
 
   const subagentExtras = subagents.filter(
     (s) => s.mcpServers.length || s.hooks.length || s.policies.length || s.decisions.length,

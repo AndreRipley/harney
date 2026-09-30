@@ -5,7 +5,23 @@ import type { HarnessEdge, HarnessNode, HarnessNodeData, NodeKind } from "./type
 
 export const DIAGRAM_VERSION = 1;
 
-const kindSchema = z.enum(["agent", "model", "prompt", "tool", "mcp", "rule", "policy", "hook", "decision"]);
+const kindSchema = z.enum([
+  "agent",
+  "model",
+  "prompt",
+  "loop",
+  "context",
+  "progress",
+  "skill",
+  "tool",
+  "mcp",
+  "rule",
+  "policy",
+  "sandbox",
+  "hook",
+  "decision",
+  "verifier",
+]);
 const strings = z.array(z.string()).catch([]);
 
 const configSchemas = {
@@ -18,6 +34,31 @@ const configSchemas = {
     reasoningEffort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]).catch("default"),
   }),
   prompt: z.object({ title: z.string().catch("Instructions"), content: z.string().catch("") }),
+  loop: z.object({
+    name: z.string().catch("Loop"),
+    mode: z.enum(["workflow", "autonomous"]).catch("autonomous"),
+    maxSteps: z.number().int().min(0).max(100).catch(8),
+    stopOnBlocker: z.boolean().catch(true),
+  }),
+  context: z.object({
+    name: z.string().catch("Context"),
+    budgetChars: z.number().int().min(0).catch(8000),
+    compactHistory: z.boolean().catch(true),
+    alwaysLoad: strings,
+    onDemand: strings,
+    treatAsUntrusted: z.boolean().catch(true),
+  }),
+  progress: z.object({
+    name: z.string().catch("Progress"),
+    objective: z.string().catch(""),
+    checklist: strings,
+    notes: z.string().catch(""),
+  }),
+  skill: z.object({
+    name: z.string().catch(""),
+    description: z.string().catch(""),
+    content: z.string().catch(""),
+  }),
   tool: z.object({
     tool: z.enum(["read", "edit", "shell", "webSearch", "webFetch"]),
     mode: z.enum(["allow", "ask", "deny"]).catch("ask"),
@@ -45,6 +86,11 @@ const configSchemas = {
     allowNetwork: z.boolean().catch(true),
     allowedDomains: strings,
   }),
+  sandbox: z.object({
+    name: z.string().catch("Sandbox"),
+    access: z.enum(["read-only", "workspace"]).catch("workspace"),
+    timeoutSeconds: z.number().int().min(0).catch(30),
+  }),
   hook: z.object({
     name: z.string().catch(""),
     event: z.enum(["preToolUse", "postToolUse", "sessionStart", "userPromptSubmit", "stop"]).catch("postToolUse"),
@@ -68,6 +114,13 @@ const configSchemas = {
         }),
       )
       .catch([]),
+  }),
+  verifier: z.object({
+    name: z.string().catch("Verifier"),
+    check: z.enum(["command", "rubric"]).catch("command"),
+    command: z.string().catch(""),
+    rubric: z.string().catch(""),
+    separateEvaluator: z.boolean().catch(true),
   }),
 } satisfies Record<NodeKind, z.ZodType>;
 

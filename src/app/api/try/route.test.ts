@@ -22,6 +22,22 @@ const providerReply: Record<string, unknown> = {
   google: { candidates: [{ content: { parts: [{ text: "Hi" }] } }] },
 };
 
+describe("/api/try errors", () => {
+  it("says which provider rejected the key and where a valid one comes from", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: { type: "authentication_error", message: "invalid x-api-key" } }), { status: 401 })),
+    );
+    const response = await POST(request("anthropic") as never);
+    const body = await response.json();
+    expect(response.status).toBe(502);
+    expect(body.error).toContain("Anthropic rejected the API key");
+    expect(body.error).toContain("calling m");
+    expect(body.error).toContain("sk-ant-");
+    expect(body.error).toContain("invalid x-api-key");
+  });
+});
+
 describe("/api/try with no harness", () => {
   for (const provider of ["anthropic", "openai", "google"]) {
     it(`leaves out the system prompt and tools for ${provider}`, async () => {

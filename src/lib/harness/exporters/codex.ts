@@ -1,5 +1,6 @@
 import { stringify } from "smol-toml";
-import { projectHooks, projectPolicy, toolModes } from "../compile";
+import { allAgents, projectHooks, projectPolicy, toolModes } from "../compile";
+import { progressPathFor, renderRuntime, runtimeFiles, sandboxMode, verifierCommands } from "../runtime";
 import { buildDecisionExport, type DecisionHookEntry } from "./decisions";
 import { PROVIDER_LABELS } from "../kinds";
 import type {
@@ -29,6 +30,12 @@ export const CODEX_SUPPORT: Record<Feature, FeatureSupport> = {
   hooks: { level: "full", note: "Written to hooks in .codex/config.toml." },
   decisions: { level: "full", note: "A hook runs a script that asks Jev. Set TYPESAFE_API_KEY; the key is never written into the files." },
   subagents: { level: "full", note: "Each subagent gets a file in .codex/agents/." },
+  loop: { level: "partial", note: "Written into AGENTS.md as a step limit. Codex does not enforce the cap." },
+  context: { level: "partial", note: "Written into AGENTS.md. Codex does not trim context for you." },
+  progress: { level: "full", note: "PROGRESS.md holds the objective, checklist and notes. AGENTS.md tells the agent to update it." },
+  skill: { level: "full", note: "Written to .codex/skills and listed in AGENTS.md as load-on-demand." },
+  sandbox: { level: "full", note: "Sets sandbox_mode in .codex/config.toml." },
+  verifier: { level: "partial", note: "A command check becomes a Stop hook. A rubric is written into AGENTS.md. A separate evaluator is an instruction, not a second process." },
 };
 
 const HOOK_EVENTS: Record<HookEvent, string> = {
@@ -73,6 +80,8 @@ function codexModel(agent: CompiledAgent, notes: TargetNote[]): Record<string, s
 }
 
 function sandboxFor(agent: CompiledAgent): Record<string, string> {
+  const chosen = sandboxMode(agent);
+  if (chosen) return { sandbox_mode: chosen };
   const modes = toolModes(agent);
   const out: Record<string, string> = {};
   if (modes.edit === "deny" || modes.shell === "deny") out.sandbox_mode = "read-only";
@@ -176,6 +185,9 @@ function buildConfigToml(config: HarnessConfig, notes: TargetNote[], decisions: 
     group.hooks = [{ type: "command", command: decision.command }];
     (hooks[HOOK_EVENTS[decision.event]] ??= []).push(group);
   }
+  for (const check of allAgents(config).flatMap(verifierCommands)) {
+    (hooks[HOOK_EVENTS.stop] ??= []).push({ hooks: [{ type: "command", command: check.command }] });
+  }
   if (Object.keys(hooks).length) tables.hooks = hooks;
 
   const content = stringify({ ...top, ...tables }).trim();
@@ -187,7 +199,11 @@ function buildAgentFile(agent: CompiledAgent, notes: TargetNote[]): ExportFile {
     name: codexName(agent),
     description: agent.description || `Handles work for ${agent.name}.`,
   });
-  const instructions = joinSections(renderInstructions(agent), renderRulesSection(agent.rules));
+  const instructions = joinSections(
+    renderInstructions(agent),
+    renderRulesSection(agent.rules),
+    renderRuntime(agent, { progressPath: progressPathFor(agent, false) }),
+  );
   const settings: Record<string, unknown> = { ...codexModel(agent, notes), ...sandboxFor(agent) };
   const servers = mcpTable(agent.mcpServers);
   if (Object.keys(servers).length) settings.mcp_servers = servers;
@@ -220,6 +236,7 @@ export function buildCodex(config: HarnessConfig): { files: ExportFile[]; notes:
       root.description,
       renderInstructions(root),
       renderRulesSection(root.rules),
+      renderRuntime(root, { progressPath: progressPathFor(root, true) }),
       subagentList,
     ),
     description: "The instructions Codex reads before every task: your prompt, rules and subagent list.",
@@ -243,7 +260,11 @@ export function buildCodex(config: HarnessConfig): { files: ExportFile[]; notes:
     });
   }
 
-  for (const sub of subagents) files.push(buildAgentFile(sub, notes));
+  files.push(...runtimeFiles(root, "codex", progressPathFor(root, true)));
+  for (const sub of subagents) {
+    files.push(buildAgentFile(sub, notes));
+    files.push(...runtimeFiles(sub, "codex", progressPathFor(sub, false)));
+  }
 
   const policyDomains = projectPolicy(config).allowedDomains;
   if (policyDomains.length) {

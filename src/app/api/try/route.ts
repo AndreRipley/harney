@@ -40,6 +40,14 @@ const toolSchema = {
   },
 };
 
+const PROVIDER_NAME: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI", google: "Google" };
+
+const KEY_HINT: Record<string, string> = {
+  anthropic: "Anthropic keys come from console.anthropic.com and start with sk-ant-. A Claude.ai or Cursor login is not an API key.",
+  openai: "OpenAI keys come from platform.openai.com and start with sk-.",
+  google: "Gemini keys come from aistudio.google.com and start with AIza.",
+};
+
 function providerError(status: number, body: string): string {
   try {
     const parsed = JSON.parse(body) as { error?: { message?: string } | string; message?: string };
@@ -51,6 +59,20 @@ function providerError(status: number, body: string): string {
   }
   const flat = body.replace(/\s+/g, " ").trim();
   return flat.slice(0, 280) || `The model returned ${status}.`;
+}
+
+function explainFailure(provider: string, model: string, status: number, body: string): string {
+  const detail = providerError(status, body);
+  const name = PROVIDER_NAME[provider] ?? provider;
+  const auth = status === 401 || status === 403 || /api[- ]?key|authentication|unauthorized|permission denied/i.test(detail);
+  if (auth) {
+    const hint = KEY_HINT[provider] ?? "Check that the key matches this model's provider.";
+    return `${name} rejected the API key while calling ${model}. ${hint} Open Edit above the chat and paste that provider's key. ${name} said: ${detail}`;
+  }
+  if (status === 404 || /model/i.test(detail)) {
+    return `${name} could not run model ${model}. ${detail}`;
+  }
+  return `${name} (${model}) returned an error: ${detail}`;
 }
 
 function toAnthropic(messages: ChatMessage[]) {
@@ -136,7 +158,7 @@ async function callAnthropic(body: TryBody) {
     }),
   });
   const raw = await response.text();
-  if (!response.ok) throw new Error(providerError(response.status, raw));
+  if (!response.ok) throw new Error(explainFailure("anthropic", body.model, response.status, raw));
   const parsed = JSON.parse(raw) as {
     content: { type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }[];
     usage?: { input_tokens?: number; output_tokens?: number };
@@ -161,7 +183,7 @@ async function callOpenAI(body: TryBody) {
     }),
   });
   const raw = await response.text();
-  if (!response.ok) throw new Error(providerError(response.status, raw));
+  if (!response.ok) throw new Error(explainFailure("openai", body.model, response.status, raw));
   const parsed = JSON.parse(raw) as {
     choices: { message: { content?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -196,7 +218,7 @@ async function callGoogle(body: TryBody) {
     }),
   });
   const raw = await response.text();
-  if (!response.ok) throw new Error(providerError(response.status, raw));
+  if (!response.ok) throw new Error(explainFailure("google", body.model, response.status, raw));
   const parsed = JSON.parse(raw) as {
     candidates?: { content?: { parts?: { text?: string; functionCall?: { name: string; args?: Record<string, unknown> } }[] } }[];
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };

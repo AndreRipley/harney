@@ -202,6 +202,18 @@ describe("setup guide", () => {
     expect(steps.find((s) => s.id === "launch")?.body.join(" ")).toMatch(/trust/);
   });
 
+  it("exports the investigation runtime as files the agent can resume from", () => {
+    const config = presetConfig("investigation");
+    const claude = file(config, "claude", "CLAUDE.md");
+    expect(claude).toContain("Stop after 8 steps");
+    expect(claude).toContain("untrusted");
+    expect(claude).toContain("Read-only");
+    expect(claude).toContain("Evidence");
+    expect(file(config, "claude", "PROGRESS.md")).toContain("Explain the failed transaction");
+    expect(runExport(config, "claude").files.some((item) => item.path.endsWith("/SKILL.md"))).toBe(true);
+    expect(codexToml(file(config, "codex", ".codex/config.toml")).sandbox_mode).toBe("read-only");
+  });
+
   it("renders every preset for every target without throwing", () => {
     for (const preset of PRESETS) {
       const { nodes, edges } = preset.build();

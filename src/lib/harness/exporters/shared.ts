@@ -22,6 +22,12 @@ export const FEATURE_LABELS: Record<Feature, string> = {
   hooks: "Hooks",
   decisions: "Jev decisions",
   subagents: "Subagents",
+  loop: "Loop",
+  context: "Context",
+  progress: "Progress",
+  skill: "Skills",
+  sandbox: "Sandbox",
+  verifier: "Verifier",
 };
 
 export const JSON_INDENT = 2;

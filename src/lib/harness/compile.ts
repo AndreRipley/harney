@@ -1,6 +1,7 @@
 import { isDelegateEdge, isPartsEdge, parentMap } from "./connections";
 import { choiceCriteria } from "./jev";
 import { KIND_META, nodeTitle, slugify } from "./kinds";
+import { runtimeIssues } from "./runtime";
 import type {
   BuiltinTool,
   CompiledAgent,
@@ -45,6 +46,12 @@ function buildAgent(agent: HarnessNode, nodes: HarnessNode[], edges: HarnessEdge
     mcpServers: [],
     hooks: [],
     decisions: [],
+    loops: [],
+    contexts: [],
+    progressRecords: [],
+    skills: [],
+    sandboxes: [],
+    verifiers: [],
   };
 
   for (const part of parts) {
@@ -73,6 +80,26 @@ function buildAgent(agent: HarnessNode, nodes: HarnessNode[], edges: HarnessEdge
         break;
       case "decision":
         compiled.decisions.push({ ...part.data.config, nodeId });
+        break;
+      case "loop":
+        compiled.loops.push({ ...part.data.config, nodeId });
+        break;
+      case "context":
+        compiled.contexts.push({ ...part.data.config, nodeId });
+        break;
+      case "progress":
+        compiled.progressRecords.push({ ...part.data.config, nodeId });
+        break;
+      case "skill":
+        compiled.skills.push({ ...part.data.config, nodeId });
+        break;
+      case "sandbox":
+        compiled.sandboxes.push({ ...part.data.config, nodeId });
+        break;
+      case "verifier":
+        compiled.verifiers.push({ ...part.data.config, nodeId });
+        break;
+      case "agent":
         break;
     }
   }
@@ -153,7 +180,26 @@ function nodeIssues(node: HarnessNode): Omit<Issue, "id">[] {
     }
     case "policy":
     case "tool":
+    case "loop":
+    case "context":
       break;
+    case "progress":
+      if (!node.data.config.objective.trim()) push("warning", `Progress "${title}" has no objective yet.`);
+      break;
+    case "skill":
+      if (!node.data.config.name.trim()) push("error", "A skill needs a name.");
+      if (!node.data.config.content.trim()) push("warning", `Skill "${title}" has no content yet.`);
+      break;
+    case "sandbox":
+      if (node.data.config.timeoutSeconds < 1) push("error", `Sandbox "${title}" needs a timeout above 0 seconds.`);
+      break;
+    case "verifier": {
+      const c = node.data.config;
+      if (!c.name.trim()) push("error", "A verifier needs a name.");
+      if (c.check === "command" && !c.command.trim()) push("error", `Verifier "${title}" needs a command to run.`);
+      if (c.check === "rubric" && !c.rubric.trim()) push("error", `Verifier "${title}" needs a rubric.`);
+      break;
+    }
   }
   return issues;
 }
@@ -258,6 +304,8 @@ export function compileGraph(nodes: HarnessNode[], edges: HarnessEdge[]): Compil
         message: `${agent.name || "The main agent"} has no model, so each tool will use its default.`,
       });
     }
+    raw.push(...runtimeIssues(agent));
+
     if (agent !== compiledRoot && !agent.description) {
       raw.push({
         severity: "warning",
@@ -364,6 +412,12 @@ export function usedFeatures(config: HarnessConfig): Map<Feature, string[]> {
     for (const m of agent.mcpServers) add("mcp", m.nodeId);
     for (const h of agent.hooks) add("hooks", h.nodeId);
     for (const d of agent.decisions) add("decisions", d.nodeId);
+    for (const loop of agent.loops) if (loop.maxSteps > 0) add("loop", loop.nodeId);
+    for (const context of agent.contexts) add("context", context.nodeId);
+    for (const progress of agent.progressRecords) add("progress", progress.nodeId);
+    for (const skill of agent.skills) add("skill", skill.nodeId);
+    for (const sandbox of agent.sandboxes) add("sandbox", sandbox.nodeId);
+    for (const verifier of agent.verifiers) add("verifier", verifier.nodeId);
   }
   for (const sub of config.subagents) add("subagents", sub.nodeId);
   return features;

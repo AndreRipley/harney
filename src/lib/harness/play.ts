@@ -1,6 +1,7 @@
 import { allAgents, mergePolicies, toolModes } from "./compile";
 import { answerBlocks, jevQuestions, JEV_KEY_ENV, type JevAnswer } from "./jev";
 import { slugify, TOOL_LABELS } from "./kinds";
+import { applyContextBudget, renderRuntime } from "./runtime";
 import type {
   BuiltinTool,
   CompiledAgent,
@@ -180,21 +181,23 @@ export function requiredKeys(config: HarnessConfig): { providers: Exclude<Provid
   return { providers, jev };
 }
 
-export function systemPrompt(agent: CompiledAgent): string {
+export function systemPrompt(agent: CompiledAgent, taskLog = ""): string {
   const instructions = agent.instructions.map((item) => item.content.trim()).filter(Boolean).join("\n\n");
   const rules = agent.rules
     .filter((rule) => rule.content.trim())
     .map((rule) => `## ${rule.name}\n\n${rule.content.trim()}`)
     .join("\n\n");
-  return [
+  const prompt = [
     `You are ${agent.name || "the agent"}.`,
     agent.description,
     instructions,
     rules && `# Rules\n\n${rules}`,
-    "This is a rehearsal inside Harness Studio. Tools are not really executed. Call them anyway when you would, so the diagram can show what would happen. After a tool result that says it was not run, continue with your best answer from what you were given.",
+    renderRuntime(agent, { taskLog }),
+    "This is a rehearsal inside Harness Studio. Tools are not really executed. Call them anyway when you would, so the diagram can show the request and the result separately. After a result that says it was not executed, continue with your best answer from what you were given.",
   ]
     .filter(Boolean)
     .join("\n\n");
+  return applyContextBudget(agent, prompt);
 }
 
 const listNames = (names: string[]) =>
@@ -246,6 +249,12 @@ export function changeSummary(before: HarnessConfig, after: HarnessConfig): stri
   if (!same(before.root.model, after.root.model)) labels.push("Model");
   if (!same(before.root.decisions, after.root.decisions)) labels.push("Jev");
   if (!same(before.root.hooks, after.root.hooks)) labels.push("Hooks");
+  if (!same(before.root.loops, after.root.loops)) labels.push("Loop");
+  if (!same(before.root.contexts, after.root.contexts)) labels.push("Context");
+  if (!same(before.root.progressRecords, after.root.progressRecords)) labels.push("Progress");
+  if (!same(before.root.skills, after.root.skills)) labels.push("Skills");
+  if (!same(before.root.sandboxes, after.root.sandboxes)) labels.push("Sandbox");
+  if (!same(before.root.verifiers, after.root.verifiers)) labels.push("Verifier");
   if (!same(
     before.subagents.map((agent) => agent.name + agent.description),
     after.subagents.map((agent) => agent.name + agent.description),

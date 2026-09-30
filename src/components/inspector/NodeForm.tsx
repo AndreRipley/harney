@@ -13,10 +13,13 @@ import {
   HOOK_EVENT_LABELS,
   HOOK_SCOPE_LABELS,
   isToolEvent,
+  LOOP_MODE_LABELS,
   MODEL_SUGGESTIONS,
   PROVIDER_LABELS,
   REASONING_LABELS,
+  SANDBOX_ACCESS_LABELS,
   TOOL_LABELS,
+  VERIFIER_CHECK_LABELS,
 } from "@/lib/harness/kinds";
 import type { DecisionQuestion, HarnessNode, KindDataMap, NodeKind } from "@/lib/harness/types";
 import { cn } from "@/lib/utils";
@@ -623,6 +626,246 @@ function QuestionFields({
   );
 }
 
+function LoopForm({ id, config }: { id: string; config: KindDataMap["loop"] }) {
+  const update = useUpdate<"loop">(id);
+  const nameId = useId();
+  const stepsId = useId();
+  return (
+    <>
+      <Field label="Name" htmlFor={nameId}>
+        <Input id={nameId} value={config.name} onChange={(e) => update({ name: e.target.value })} placeholder="Loop" />
+      </Field>
+      <Field label="Who chooses the next step">
+        <Segmented
+          label="Who chooses the next step"
+          value={config.mode}
+          onChange={(mode) => update({ mode })}
+          options={(Object.entries(LOOP_MODE_LABELS) as [KindDataMap["loop"]["mode"], string][]).map(([value, label]) => ({ value, label }))}
+        />
+      </Field>
+      <Field label="Step limit" htmlFor={stepsId} hint="Try stops here too, at 24 steps at most.">
+        <Input
+          id={stepsId}
+          type="number"
+          min={1}
+          max={24}
+          step={1}
+          value={config.maxSteps}
+          onChange={(e) => update({ maxSteps: Number(e.target.value) })}
+          className="font-mono text-[13px]"
+        />
+      </Field>
+      <SwitchRow
+        label="Stop when blocked"
+        description="End the turn when a tool is refused, instead of asking the model to try something else."
+        checked={config.stopOnBlocker}
+        onChange={(stopOnBlocker) => update({ stopOnBlocker })}
+      />
+    </>
+  );
+}
+
+function ContextForm({ id, config }: { id: string; config: KindDataMap["context"] }) {
+  const update = useUpdate<"context">(id);
+  const nameId = useId();
+  const budgetId = useId();
+  return (
+    <>
+      <Field label="Name" htmlFor={nameId}>
+        <Input id={nameId} value={config.name} onChange={(e) => update({ name: e.target.value })} placeholder="Context" />
+      </Field>
+      <Field label="Character budget" htmlFor={budgetId} hint="Try trims the rehearsal prompt to this size.">
+        <Input
+          id={budgetId}
+          type="number"
+          min={200}
+          step={100}
+          value={config.budgetChars}
+          onChange={(e) => update({ budgetChars: Number(e.target.value) })}
+          className="font-mono text-[13px]"
+        />
+      </Field>
+      <ListField
+        label="Always load"
+        hint="One source per line. These stay in every turn."
+        value={config.alwaysLoad}
+        onChange={(alwaysLoad) => update({ alwaysLoad })}
+        placeholder={"AGENTS.md\nThe open ticket"}
+        mono={false}
+      />
+      <ListField
+        label="Load only when needed"
+        hint="Named so the model can ask for them. They are not pasted into every turn."
+        value={config.onDemand}
+        onChange={(onDemand) => update({ onDemand })}
+        placeholder={"Operating procedure\nTransaction record"}
+        mono={false}
+      />
+      <SwitchRow
+        label="Compact older turns"
+        description="Keep decisions and drop repeated tool output when the conversation grows."
+        checked={config.compactHistory}
+        onChange={(compactHistory) => update({ compactHistory })}
+      />
+      <SwitchRow
+        label="Treat retrieved content as untrusted"
+        description="Pasted notes and tool output are data, not new instructions."
+        checked={config.treatAsUntrusted}
+        onChange={(treatAsUntrusted) => update({ treatAsUntrusted })}
+      />
+    </>
+  );
+}
+
+function ProgressForm({ id, config }: { id: string; config: KindDataMap["progress"] }) {
+  const update = useUpdate<"progress">(id);
+  const nameId = useId();
+  const objectiveId = useId();
+  const notesId = useId();
+  return (
+    <>
+      <Field label="Name" htmlFor={nameId}>
+        <Input id={nameId} value={config.name} onChange={(e) => update({ name: e.target.value })} placeholder="Progress" />
+      </Field>
+      <Field label="Objective" htmlFor={objectiveId} hint="What a later session should still be trying to finish.">
+        <Textarea
+          id={objectiveId}
+          value={config.objective}
+          rows={3}
+          onChange={(e) => update({ objective: e.target.value })}
+          placeholder="Explain the failed transaction and cite the evidence."
+        />
+      </Field>
+      <ListField
+        label="Checklist"
+        hint="One item per line. Export writes these into PROGRESS.md."
+        value={config.checklist}
+        onChange={(checklist) => update({ checklist })}
+        placeholder={"Retrieve the transaction\nCite the evidence"}
+        mono={false}
+      />
+      <Field label="Notes" htmlFor={notesId}>
+        <Textarea id={notesId} value={config.notes} rows={3} onChange={(e) => update({ notes: e.target.value })} placeholder="Decisions a later session should not relitigate." />
+      </Field>
+    </>
+  );
+}
+
+function SkillForm({ id, config }: { id: string; config: KindDataMap["skill"] }) {
+  const update = useUpdate<"skill">(id);
+  const nameId = useId();
+  const descriptionId = useId();
+  const contentId = useId();
+  return (
+    <>
+      <Field label="Name" htmlFor={nameId}>
+        <Input id={nameId} value={config.name} onChange={(e) => update({ name: e.target.value })} placeholder="Evidence" />
+      </Field>
+      <Field label="When to load it" htmlFor={descriptionId} hint="The model sees this every turn. The body stays in a file until needed.">
+        <Textarea
+          id={descriptionId}
+          value={config.description}
+          rows={2}
+          onChange={(e) => update({ description: e.target.value })}
+          placeholder="Load when citing a finding."
+        />
+      </Field>
+      <Field label="Contents" htmlFor={contentId}>
+        <Textarea
+          id={contentId}
+          value={config.content}
+          rows={6}
+          onChange={(e) => update({ content: e.target.value })}
+          placeholder="Every claim needs the record it came from."
+          className="font-mono text-[13px]"
+        />
+      </Field>
+    </>
+  );
+}
+
+function SandboxForm({ id, config }: { id: string; config: KindDataMap["sandbox"] }) {
+  const update = useUpdate<"sandbox">(id);
+  const nameId = useId();
+  const timeoutId = useId();
+  return (
+    <>
+      <Field label="Name" htmlFor={nameId}>
+        <Input id={nameId} value={config.name} onChange={(e) => update({ name: e.target.value })} placeholder="Sandbox" />
+      </Field>
+      <Field label="Where actions run" hint="Permission Policy still decides whether an action is allowed.">
+        <Segmented
+          label="Where actions run"
+          value={config.access}
+          onChange={(access) => update({ access })}
+          options={(Object.entries(SANDBOX_ACCESS_LABELS) as [KindDataMap["sandbox"]["access"], string][]).map(([value, label]) => ({ value, label }))}
+        />
+      </Field>
+      <Field label="Timeout (seconds)" htmlFor={timeoutId}>
+        <Input
+          id={timeoutId}
+          type="number"
+          min={1}
+          step={1}
+          value={config.timeoutSeconds}
+          onChange={(e) => update({ timeoutSeconds: Number(e.target.value) })}
+          className="font-mono text-[13px]"
+        />
+      </Field>
+    </>
+  );
+}
+
+function VerifierForm({ id, config }: { id: string; config: KindDataMap["verifier"] }) {
+  const update = useUpdate<"verifier">(id);
+  const nameId = useId();
+  const commandId = useId();
+  const rubricId = useId();
+  return (
+    <>
+      <Field label="Name" htmlFor={nameId}>
+        <Input id={nameId} value={config.name} onChange={(e) => update({ name: e.target.value })} placeholder="Verifier" />
+      </Field>
+      <Field label="How to check">
+        <Segmented
+          label="How to check"
+          value={config.check}
+          onChange={(check) => update({ check })}
+          options={(Object.entries(VERIFIER_CHECK_LABELS) as [KindDataMap["verifier"]["check"], string][]).map(([value, label]) => ({ value, label }))}
+        />
+      </Field>
+      {config.check === "command" ? (
+        <Field label="Command" htmlFor={commandId} hint="Export turns this into a hook that runs when the agent stops.">
+          <Input
+            id={commandId}
+            value={config.command}
+            onChange={(e) => update({ command: e.target.value })}
+            placeholder="npm test"
+            className="font-mono text-[13px]"
+            spellCheck={false}
+          />
+        </Field>
+      ) : (
+        <Field label="Rubric" htmlFor={rubricId} hint="What a separate pass should look for.">
+          <Textarea
+            id={rubricId}
+            value={config.rubric}
+            rows={4}
+            onChange={(e) => update({ rubric: e.target.value })}
+            placeholder="The explanation names the transaction and cites a procedure."
+          />
+        </Field>
+      )}
+      <SwitchRow
+        label="Separate evaluator"
+        description="The agent that did the work should not be the one that grades it."
+        checked={config.separateEvaluator}
+        onChange={(separateEvaluator) => update({ separateEvaluator })}
+      />
+    </>
+  );
+}
+
 export function NodeForm({ node, isSubagent }: { node: HarnessNode; isSubagent: boolean }) {
   const { id, data } = node;
   switch (data.kind) {
@@ -632,6 +875,14 @@ export function NodeForm({ node, isSubagent }: { node: HarnessNode; isSubagent: 
       return <ModelForm id={id} config={data.config} />;
     case "prompt":
       return <PromptForm id={id} config={data.config} />;
+    case "loop":
+      return <LoopForm id={id} config={data.config} />;
+    case "context":
+      return <ContextForm id={id} config={data.config} />;
+    case "progress":
+      return <ProgressForm id={id} config={data.config} />;
+    case "skill":
+      return <SkillForm id={id} config={data.config} />;
     case "tool":
       return <ToolForm id={id} config={data.config} />;
     case "mcp":
@@ -640,9 +891,13 @@ export function NodeForm({ node, isSubagent }: { node: HarnessNode; isSubagent: 
       return <RuleForm id={id} config={data.config} />;
     case "policy":
       return <PolicyForm id={id} config={data.config} />;
+    case "sandbox":
+      return <SandboxForm id={id} config={data.config} />;
     case "hook":
       return <HookForm id={id} config={data.config} />;
     case "decision":
       return <DecisionForm id={id} config={data.config} />;
+    case "verifier":
+      return <VerifierForm id={id} config={data.config} />;
   }
 }
