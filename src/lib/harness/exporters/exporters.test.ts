@@ -157,6 +157,40 @@ describe("Codex export", () => {
   });
 });
 
+describe("Jev decisions", () => {
+  it("exports a hook script and never writes the API key", () => {
+    const { nodes, edges } = buildGraph([
+      { id: "a", kind: "agent", config: { name: "Main" } },
+      { id: "p", kind: "prompt", to: "a", config: { content: "Be careful." } },
+      { id: "d", kind: "decision", to: "a", config: { name: "Safety" } },
+    ]);
+    const config = compileGraph(nodes, edges).config!;
+    const claude = runExport(config, "claude");
+    const script = claude.files.find((f) => f.path === ".harness/decisions/safety.mjs");
+    expect(script?.content).toContain("https://api.typesafe.ai/v1/systemone");
+    expect(script?.content).not.toContain("jv_live_");
+    const settings = JSON.parse(file(config, "claude", ".claude/settings.json"));
+    expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe("node .harness/decisions/safety.mjs");
+    const cursor = JSON.parse(file(config, "cursor", ".cursor/hooks.json"));
+    expect(cursor.hooks.preToolUse[0].command).toBe("node .harness/decisions/safety.mjs");
+    const toml = codexToml(file(config, "codex", ".codex/config.toml"));
+    expect(toml.hooks.PreToolUse[0].hooks[0].command).toBe("node .harness/decisions/safety.mjs");
+    const { steps } = bundleFiles(config, "claude", claude.files);
+    expect(steps.find((step) => step.id === "secrets")?.items?.map((item) => item.name)).toContain("TYPESAFE_API_KEY");
+  });
+
+  it("leaves a file-edit decision out of Cursor", () => {
+    const { nodes, edges } = buildGraph([
+      { id: "a", kind: "agent", config: { name: "Main" } },
+      { id: "p", kind: "prompt", to: "a", config: { content: "Be careful." } },
+      { id: "d", kind: "decision", to: "a", config: { name: "Edits", event: "preToolUse", scope: "edit" } },
+    ]);
+    const result = runExport(compileGraph(nodes, edges).config!, "cursor");
+    expect(result.files.some((f) => f.path.endsWith(".mjs"))).toBe(false);
+    expect(result.notes.some((note) => note.dropped)).toBe(true);
+  });
+});
+
 describe("setup guide", () => {
   it("lists secrets, runtimes and the trust step for Codex", () => {
     const config = reviewerWithExtras();

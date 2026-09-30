@@ -48,6 +48,23 @@ describe("compileGraph", () => {
     expect(errors.map((e) => e.nodeId)).toEqual(["b"]);
   });
 
+  it("keeps a Jev decision on its agent and asks for a real question", () => {
+    const { nodes, edges } = buildGraph([
+      { id: "a", kind: "agent", config: { name: "Main" } },
+      { id: "p", kind: "prompt", to: "a", config: { content: "Be careful." } },
+      {
+        id: "d",
+        kind: "decision",
+        to: "a",
+        config: { name: "Safety", questions: [{ name: "block", type: "noul", instructions: "", criteria: [], blockChoices: [], blockAt: 0.5 }] },
+      },
+    ]);
+    const result = compileGraph(nodes, edges);
+    expect(result.config?.root.decisions).toHaveLength(1);
+    expect(result.config?.root.decisions[0].model).toBe("jev-latest");
+    expect(result.issues.some((issue) => issue.nodeId === "d" && /instructions/.test(issue.message))).toBe(true);
+  });
+
   it("validates MCP servers", () => {
     const { nodes, edges } = buildGraph([
       { id: "a", kind: "agent", config: { name: "Main" } },

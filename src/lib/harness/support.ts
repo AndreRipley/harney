@@ -32,6 +32,8 @@ export function nodeFeatures(node: HarnessNode, isSubagent: boolean): Feature[] 
       return ["mcp"];
     case "hook":
       return ["hooks"];
+    case "decision":
+      return ["decisions"];
   }
 }
 

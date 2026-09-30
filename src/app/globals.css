@@ -174,11 +174,13 @@
   height: 12px;
   border: 2px solid var(--handle-color);
   background: var(--card);
-  transition: transform 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+  opacity: 0;
+  transition: transform 120ms ease, background-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
 }
 
 .react-flow__node:hover .react-flow__handle.harness-handle,
-.react-flow__node.selected .react-flow__handle.harness-handle {
+.react-flow__handle.harness-handle.connectingfrom {
+  opacity: 1;
   transform: translate(var(--tx, 0), var(--ty, 0)) scale(1.3);
 }
 
@@ -198,22 +200,43 @@
   box-shadow: 0 0 0 4px color-mix(in oklch, var(--handle-color) 18%, transparent);
 }
 
-.handle-label {
-  position: absolute;
-  pointer-events: none;
-  white-space: nowrap;
-  border-radius: 0.375rem;
-  background: var(--foreground);
-  color: var(--background);
-  padding: 1px 6px;
-  font-size: 10px;
-  font-weight: 600;
-  opacity: 0;
-  transition: opacity 120ms ease;
+.react-flow__handle.harness-handle-target {
+  z-index: 1;
 }
 
-.react-flow__node:hover .handle-label,
-.react-flow__node.selected .handle-label,
-.react-flow.connecting .handle-label {
-  opacity: 0.9;
+.react-flow__handle.harness-handle:not(.harness-handle-target) {
+  z-index: 2;
+}
+
+.react-flow.connecting .react-flow__handle.harness-handle:not(.harness-handle-target) {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .react-flow__node.harness-live > div {
+    animation: harness-live 1.2s ease-in-out infinite;
+  }
+}
+
+.react-flow__node.harness-live > div {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.react-flow__edge.harness-live .react-flow__edge-path {
+  stroke: var(--ring);
+  stroke-width: 3;
+}
+
+@keyframes harness-live {
+  50% { box-shadow: 0 0 0 5px color-mix(in oklch, var(--ring) 55%, transparent); }
+}
+
+.react-flow__edge.harness-delegate .react-flow__edge-text {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--muted-foreground);
+}
+
+.react-flow__edge.harness-delegate .react-flow__edge-textbg {
+  fill: var(--card);
 }

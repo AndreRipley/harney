@@ -23,6 +23,25 @@ describe("diagram files", () => {
     expect(doc.nodes[0].data).toMatchObject({ kind: "mcp", config: { name: "gh", transport: "stdio", args: [] } });
   });
 
+  it("reads older files that stored the link on the connection dots", () => {
+    const doc = parseDiagram(
+      JSON.stringify({
+        version: 1,
+        name: "Old",
+        nodes: [
+          { id: "a", position: { x: 0, y: 0 }, data: { kind: "agent", config: { name: "Main" } } },
+          { id: "b", position: { x: 0, y: 0 }, data: { kind: "agent", config: { name: "Helper" } } },
+          { id: "m", position: { x: 0, y: 0 }, data: { kind: "model", config: { provider: "anthropic", modelId: "sonnet" } } },
+        ],
+        edges: [
+          { id: "e1", source: "a", target: "b", sourceHandle: "delegate", targetHandle: "parent" },
+          { id: "e2", source: "m", target: "a", sourceHandle: "out", targetHandle: "parts" },
+        ],
+      }),
+    );
+    expect(doc.edges.map((e) => e.data?.role)).toEqual(["delegate", "parts"]);
+  });
+
   it("explains bad files", () => {
     expect(() => parseDiagram("nope")).toThrow(/valid JSON/);
     expect(() => parseDiagram("{}")).toThrow(/doesn't look like/);

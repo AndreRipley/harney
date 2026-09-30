@@ -1,4 +1,4 @@
-import { HANDLES } from "./connections";
+import { presentEdge } from "./connections";
 import { makeNodeData } from "./kinds";
 import { autoLayout } from "./layout";
 import type { HarnessEdge, HarnessNode, KindDataMap, NodeKind } from "./types";
@@ -34,9 +34,12 @@ export function buildGraph(specs: Spec[], idPrefix = ""): { nodes: HarnessNode[]
       const isAgent = spec.kind === "agent";
       const source = isAgent ? pid(spec.to!) : pid(spec.id);
       const target = isAgent ? pid(spec.id) : pid(spec.to!);
-      const sourceHandle = isAgent ? HANDLES.delegate : HANDLES.out;
-      const targetHandle = isAgent ? HANDLES.parent : HANDLES.parts;
-      return { id: `e-${source}-${target}`, source, target, sourceHandle, targetHandle };
+      return presentEdge({
+        id: `e-${source}-${target}`,
+        source,
+        target,
+        data: { role: isAgent ? "delegate" : "parts" },
+      });
     });
   return { nodes: autoLayout(nodes, edges), edges };
 }

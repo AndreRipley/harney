@@ -20,6 +20,7 @@ export const FEATURE_LABELS: Record<Feature, string> = {
   network: "Network access",
   mcp: "MCP servers",
   hooks: "Hooks",
+  decisions: "Jev decisions",
   subagents: "Subagents",
 };
 

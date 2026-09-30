@@ -1,4 +1,5 @@
 import { isDelegateEdge, isPartsEdge, parentMap } from "./connections";
+import { choiceCriteria } from "./jev";
 import { KIND_META, nodeTitle, slugify } from "./kinds";
 import type {
   BuiltinTool,
@@ -43,6 +44,7 @@ function buildAgent(agent: HarnessNode, nodes: HarnessNode[], edges: HarnessEdge
     policies: [],
     mcpServers: [],
     hooks: [],
+    decisions: [],
   };
 
   for (const part of parts) {
@@ -68,6 +70,9 @@ function buildAgent(agent: HarnessNode, nodes: HarnessNode[], edges: HarnessEdge
         break;
       case "hook":
         compiled.hooks.push({ ...part.data.config, nodeId });
+        break;
+      case "decision":
+        compiled.decisions.push({ ...part.data.config, nodeId });
         break;
     }
   }
@@ -116,6 +121,36 @@ function nodeIssues(node: HarnessNode): Omit<Issue, "id">[] {
     case "hook":
       if (!node.data.config.command.trim()) push("error", `Hook "${title}" needs a command to run.`);
       break;
+    case "decision": {
+      const c = node.data.config;
+      if (!c.name.trim()) push("error", "A Jev decision needs a name.");
+      if (!c.model.trim()) push("error", `${title}: choose a Jev model, such as jev-latest.`);
+      if (c.questions.length === 0) push("error", `${title} needs at least one question.`);
+      const names = new Set<string>();
+      for (const question of c.questions) {
+        const qName = question.name.trim() || "A question";
+        if (!question.name.trim()) push("error", `${title}: each question needs a name.`);
+        else if (names.has(question.name.trim())) push("error", `${title} asks "${question.name.trim()}" twice.`);
+        names.add(question.name.trim());
+        if (!question.instructions.trim()) push("error", `${title}: "${qName}" needs instructions.`);
+        if (question.type === "choice") {
+          const options = choiceCriteria(question.criteria);
+          if (Object.keys(options).length === 0) {
+            push("error", `${title}: "${qName}" needs options, one per line, like billing: money problems.`);
+          }
+          if (question.blockChoices.length === 0) {
+            push("error", `${title}: say which answers for "${qName}" should block.`);
+          }
+        }
+        if (question.type === "score" && (question.criteria.length < 2 || question.criteria.length > 10)) {
+          push("error", `${title}: "${qName}" needs a scale of 2 to 10 levels, low to high.`);
+        }
+        if (question.type === "noul" && (question.blockAt < 0 || question.blockAt > 1)) {
+          push("error", `${title}: the yes threshold for "${qName}" has to be between 0 and 1.`);
+        }
+      }
+      break;
+    }
     case "policy":
     case "tool":
       break;
@@ -149,7 +184,7 @@ export function compileGraph(nodes: HarnessNode[], edges: HarnessEdge[]): Compil
     raw.push({
       severity: "error",
       nodeId: extra.id,
-      message: `"${nodeTitle(extra.data)}" isn't connected to ${nodeTitle(root.data)}. Drag from the bottom of ${nodeTitle(root.data)} to its top to make it a subagent, or delete it.`,
+      message: `"${nodeTitle(extra.data)}" isn't connected to ${nodeTitle(root.data)}. Drag a line from ${nodeTitle(root.data)} to it to make it a subagent, or delete it.`,
     });
   }
 
@@ -295,6 +330,8 @@ export function projectMcpServers(config: HarnessConfig): (McpData & { nodeId: s
 
 export const projectHooks = (config: HarnessConfig) => allAgents(config).flatMap((a) => a.hooks);
 
+export const projectDecisions = (config: HarnessConfig) => allAgents(config).flatMap((a) => a.decisions);
+
 export const projectPolicy = (config: HarnessConfig) =>
   mergePolicies(allAgents(config).flatMap((a) => a.policies));
 
@@ -326,6 +363,7 @@ export function usedFeatures(config: HarnessConfig): Map<Feature, string[]> {
     }
     for (const m of agent.mcpServers) add("mcp", m.nodeId);
     for (const h of agent.hooks) add("hooks", h.nodeId);
+    for (const d of agent.decisions) add("decisions", d.nodeId);
   }
   for (const sub of config.subagents) add("subagents", sub.nodeId);
   return features;

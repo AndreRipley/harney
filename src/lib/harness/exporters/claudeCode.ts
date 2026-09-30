@@ -1,4 +1,5 @@
 import { projectHooks, projectMcpServers, projectPolicy, toolModes } from "../compile";
+import { buildDecisionExport, type DecisionHookEntry } from "./decisions";
 import { PROVIDER_LABELS } from "../kinds";
 import type {
   BuiltinTool,
@@ -32,6 +33,7 @@ export const CLAUDE_SUPPORT: Record<Feature, FeatureSupport> = {
   network: { level: "partial", note: "Claude Code controls web fetching, not network use by shell commands." },
   mcp: { level: "full", note: "Written to .mcp.json." },
   hooks: { level: "full", note: "Written to hooks in .claude/settings.json." },
+  decisions: { level: "full", note: "A hook runs a script that asks Jev. Set TYPESAFE_API_KEY; the key is never written into the files." },
   subagents: { level: "full", note: "Each subagent gets a file in .claude/agents/." },
 };
 
@@ -79,7 +81,7 @@ function claudeModel(agent: CompiledAgent, notes: TargetNote[]): string | null {
   return model.modelId.trim();
 }
 
-function buildSettings(config: HarnessConfig, notes: TargetNote[]) {
+function buildSettings(config: HarnessConfig, notes: TargetNote[], decisions: DecisionHookEntry[]) {
   const { root } = config;
   const settings: Record<string, unknown> = {
     $schema: "https://json.schemastore.org/claude-code-settings.json",
@@ -123,6 +125,13 @@ function buildSettings(config: HarnessConfig, notes: TargetNote[]) {
       group.matcher = HOOK_MATCHERS[hook.scope];
     }
     group.hooks = [{ type: "command", command: hook.command.trim() }];
+    (hooks[event] ??= []).push(group);
+  }
+  for (const decision of decisions) {
+    const event = HOOK_EVENTS[decision.event];
+    const group: Record<string, unknown> = {};
+    if (decision.event === "preToolUse") group.matcher = HOOK_MATCHERS[decision.scope];
+    group.hooks = [{ type: "command", command: decision.command }];
     (hooks[event] ??= []).push(group);
   }
   if (Object.keys(hooks).length) settings.hooks = hooks;
@@ -177,6 +186,8 @@ export function buildClaudeCode(config: HarnessConfig): { files: ExportFile[]; n
   const notes: TargetNote[] = [];
   const { root, subagents } = config;
   const files: ExportFile[] = [];
+  const decisions = buildDecisionExport(config, "claude");
+  files.push(...decisions.files);
 
   const subagentList = subagents.length
     ? `## Subagents\n\nHand work to these helpers when it matches what they're for:\n\n${subagents
@@ -196,7 +207,7 @@ export function buildClaudeCode(config: HarnessConfig): { files: ExportFile[]; n
     description: "The instructions Claude reads at the start of every session: your prompt and rules.",
   });
 
-  const settings = buildSettings(config, notes);
+  const settings = buildSettings(config, notes, decisions.entries);
   if (settings) {
     files.push({
       path: ".claude/settings.json",
@@ -217,15 +228,16 @@ export function buildClaudeCode(config: HarnessConfig): { files: ExportFile[]; n
   for (const sub of subagents) files.push(buildSubagentFile(sub, notes));
 
   const subagentExtras = subagents.filter(
-    (s) => s.mcpServers.length || s.hooks.length || s.policies.length,
+    (s) => s.mcpServers.length || s.hooks.length || s.policies.length || s.decisions.length,
   );
   if (subagentExtras.length) {
     notes.push({
-      message: "Claude Code applies MCP servers, hooks and permission policies to the whole project, so the ones on subagents are shared with the main agent.",
+      message: "Claude Code applies MCP servers, hooks, Jev decisions and permission policies to the whole project, so the ones on subagents are shared with the main agent.",
       nodeIds: subagentExtras.flatMap((s) => [
         ...s.mcpServers.map((m) => m.nodeId),
         ...s.hooks.map((h) => h.nodeId),
         ...s.policies.map((p) => p.nodeId),
+        ...s.decisions.map((d) => d.nodeId),
       ]),
     });
   }

@@ -7,6 +7,7 @@ import {
   Globe,
   type LucideIcon,
   Plug,
+  Scale,
   ScrollText,
   Search,
   ShieldCheck,
@@ -26,6 +27,7 @@ export const KIND_ICONS: Record<NodeKind, LucideIcon> = {
   rule: BookOpenText,
   policy: ShieldCheck,
   hook: Webhook,
+  decision: Scale,
 };
 
 export const TOOL_ICONS: Record<BuiltinTool, LucideIcon> = {

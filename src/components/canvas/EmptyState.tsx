@@ -8,7 +8,7 @@ import { PRESETS } from "@/lib/harness/presets";
 
 const STEPS = [
   { icon: Bot, title: "Add an Agent", text: "Drag it in from the left, or click it." },
-  { icon: Spline, title: "Connect parts", text: "Wire a model, prompt and tools into its left side." },
+  { icon: Spline, title: "Connect cards", text: "Drag a line to an agent. A part joins it. Another agent becomes a subagent." },
   { icon: MousePointerClick, title: "Click to configure", text: "Each card's settings open on the right." },
 ];
 

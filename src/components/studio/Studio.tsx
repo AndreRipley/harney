@@ -1,16 +1,19 @@
 "use client";
 
 import { ReactFlowProvider } from "@xyflow/react";
-import { Plus } from "lucide-react";
+import { PanelLeftOpen, PanelRightOpen, Plus } from "lucide-react";
 import { useEffect } from "react";
 import { Canvas } from "@/components/canvas/Canvas";
 import { Palette, PaletteList } from "@/components/canvas/Palette";
 import { ExportDialog } from "@/components/export/ExportDialog";
 import { Inspector, InspectorContent } from "@/components/inspector/Inspector";
+import { TryDock, TryLauncher, TryPanel } from "@/components/inspector/TryPanel";
 import { PreviewDrawer } from "@/components/preview/PreviewDrawer";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { cn } from "@/lib/utils";
 import { useHarnessStore } from "@/store/harnessStore";
 import { TopBar } from "./TopBar";
 
@@ -76,38 +79,105 @@ function MobileInspector() {
   const selectedCount = useHarnessStore((s) => s.nodes.filter((n) => n.selected).length);
   const exportOpen = useHarnessStore((s) => s.exportOpen);
   const selectOnly = useHarnessStore((s) => s.selectOnly);
-  const open = !isDesktop && selectedCount > 0 && !exportOpen;
+  const tab = useHarnessStore((s) => s.rightTab);
+  const setTab = useHarnessStore((s) => s.setRightTab);
+  const open = !isDesktop && !exportOpen && (selectedCount > 0 || tab === "try");
   return (
-    <Sheet open={open} onOpenChange={(next) => !next && selectOnly(null)}>
-      <SheetContent side="bottom" className="max-h-[80dvh] gap-0 overflow-y-auto rounded-t-2xl" showCloseButton>
-        <SheetTitle className="sr-only">Card settings</SheetTitle>
-        <SheetDescription className="sr-only">Edit the selected card.</SheetDescription>
-        <div className="pt-8">
-          <InspectorContent />
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
+        setTab("inspect");
+        selectOnly(null);
+      }}
+    >
+      <SheetContent side="bottom" className="flex h-[85dvh] max-h-[85dvh] flex-col gap-0 overflow-hidden rounded-t-2xl" showCloseButton>
+        <SheetTitle className={tab === "try" ? "px-4 pt-4 text-sm font-semibold" : "sr-only"}>{tab === "try" ? "Test your harness" : "Card settings"}</SheetTitle>
+        <SheetDescription className="sr-only">{tab === "try" ? "Chat with your harness next to the plain model." : "Edit the selected card."}</SheetDescription>
+        <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", tab === "try" ? "pt-2" : "pt-8")}>
+          {tab === "try" ? <TryPanel stacked /> : <div className="h-full overflow-y-auto"><InspectorContent /></div>}
         </div>
       </SheetContent>
     </Sheet>
   );
 }
 
+function PartsToggle() {
+  const open = useHarnessStore((s) => s.partsPanelOpen);
+  const setOpen = useHarnessStore((s) => s.setPartsPanelOpen);
+  if (open) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="outline"
+            size="icon-sm"
+            aria-label="Open parts"
+            aria-expanded={false}
+            aria-controls="parts"
+            onClick={() => setOpen(true)}
+            className="absolute top-8 left-3 z-10 hidden bg-background shadow-sm md:inline-flex"
+          />
+        }
+      >
+        <PanelLeftOpen />
+      </TooltipTrigger>
+      <TooltipContent>Show parts</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function InspectorToggle() {
+  const open = useHarnessStore((s) => s.inspectorOpen || s.rightTab === "try");
+  const setOpen = useHarnessStore((s) => s.setInspectorOpen);
+  if (open) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="outline"
+            size="icon-sm"
+            aria-label="Open inspector"
+            aria-expanded={false}
+            aria-controls="inspector"
+            onClick={() => setOpen(true)}
+            className="absolute top-8 right-3 z-10 hidden bg-background shadow-sm lg:inline-flex"
+          />
+        }
+      >
+        <PanelRightOpen />
+      </TooltipTrigger>
+      <TooltipContent>Show inspector</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function Studio() {
   useKeyboardShortcuts();
   const previewOpen = useHarnessStore((s) => s.previewOpen);
+  const partsPanelOpen = useHarnessStore((s) => s.partsPanelOpen);
+  const inspectorOpen = useHarnessStore((s) => s.inspectorOpen);
+  const tryOpen = useHarnessStore((s) => s.rightTab === "try");
 
   return (
     <ReactFlowProvider>
       <div className="flex h-dvh flex-col overflow-hidden bg-background">
         <TopBar />
         <div className="flex min-h-0 flex-1">
-          <Palette className="hidden md:flex" />
+          {partsPanelOpen && <Palette className="hidden md:flex" />}
           <main className="relative flex min-w-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1">
               <Canvas />
               <MobilePalette />
+              <PartsToggle />
+              <InspectorToggle />
+              <TryLauncher />
             </div>
             {previewOpen && <PreviewDrawer />}
           </main>
-          <Inspector className="hidden lg:flex" />
+          {tryOpen ? <TryDock className="hidden lg:flex" /> : inspectorOpen && <Inspector className="hidden lg:flex" />}
         </div>
         <MobileInspector />
         <ExportDialog />

@@ -186,7 +186,11 @@ export function TopBar() {
           }}
         />
 
-        <Button variant={previewOpen ? "secondary" : "outline"} onClick={() => setPreviewOpen(!previewOpen)} aria-pressed={previewOpen} className="ml-1">
+        <Button variant="outline" onClick={clearBoard} disabled={!hasNodes} className="ml-1">
+          <Trash2 />
+          <span className="hidden sm:inline">Clear</span>
+        </Button>
+        <Button variant={previewOpen ? "secondary" : "outline"} onClick={() => setPreviewOpen(!previewOpen)} aria-pressed={previewOpen}>
           {previewOpen ? <EyeOff /> : <Eye />}
           <span className="hidden sm:inline">Preview</span>
         </Button>

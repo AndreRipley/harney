@@ -8,7 +8,8 @@ export type NodeKind =
   | "mcp"
   | "rule"
   | "policy"
-  | "hook";
+  | "hook"
+  | "decision";
 
 export type ComponentKind = Exclude<NodeKind, "agent">;
 
@@ -18,6 +19,8 @@ export type BuiltinTool = "read" | "edit" | "shell" | "webSearch" | "webFetch";
 export type ToolMode = "allow" | "ask" | "deny";
 export type HookEvent = "preToolUse" | "postToolUse" | "sessionStart" | "userPromptSubmit" | "stop";
 export type HookScope = "any" | "shell" | "edit";
+export type DecisionEvent = "preToolUse" | "userPromptSubmit" | "stop";
+export type DecisionQuestionType = "choice" | "score" | "noul";
 
 export interface AgentData {
   name: string;
@@ -77,6 +80,28 @@ export interface HookData {
   command: string;
 }
 
+/** One typed question sent to Jev with the hook's stdin as the state. */
+export interface DecisionQuestion {
+  name: string;
+  type: DecisionQuestionType;
+  instructions: string;
+  /** Choice lines are `key: meaning`. Score lines are the scale, low to high. */
+  criteria: string[];
+  /** Choice answers that block. Unused for score and noul. */
+  blockChoices: string[];
+  /** Noul: block when yes is at least this (0–1). Score: block when the score is at least this. */
+  blockAt: number;
+}
+
+export interface DecisionData {
+  name: string;
+  /** Jev model id, usually `jev-latest`. */
+  model: string;
+  event: DecisionEvent;
+  scope: HookScope;
+  questions: DecisionQuestion[];
+}
+
 export interface KindDataMap {
   agent: AgentData;
   model: ModelData;
@@ -86,6 +111,7 @@ export interface KindDataMap {
   rule: RuleData;
   policy: PolicyData;
   hook: HookData;
+  decision: DecisionData;
 }
 
 export type HarnessNodeData = {
@@ -120,6 +146,7 @@ export interface CompiledAgent {
   policies: WithNode<PolicyData>[];
   mcpServers: WithNode<McpData>[];
   hooks: WithNode<HookData>[];
+  decisions: WithNode<DecisionData>[];
 }
 
 export interface HarnessConfig {
@@ -140,6 +167,7 @@ export type Feature =
   | "network"
   | "mcp"
   | "hooks"
+  | "decisions"
   | "subagents";
 
 export interface ExportFile {

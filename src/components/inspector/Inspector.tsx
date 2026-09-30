@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleAlert, CircleCheck, CircleMinus, CircleDot, Copy, Trash2, TriangleAlert } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleMinus, CircleDot, Copy, PanelRightClose, Trash2, TriangleAlert } from "lucide-react";
 import { KindIcon, NodeIcon } from "@/components/harness/kindIcons";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -212,7 +212,7 @@ function NodePanel({ node }: { node: HarnessNode }) {
   );
 }
 
-const QUICK_ADD: NodeKind[] = ["model", "prompt", "tool", "mcp", "rule", "policy", "hook", "agent"];
+const QUICK_ADD: NodeKind[] = ["model", "prompt", "tool", "mcp", "rule", "policy", "hook", "decision", "agent"];
 
 function QuickAdd({ agentId }: { agentId: string }) {
   const { addCard } = useCanvasActions();
@@ -273,9 +273,25 @@ export function InspectorContent() {
 }
 
 export function Inspector({ className }: { className?: string }) {
+  const setInspectorOpen = useHarnessStore((s) => s.setInspectorOpen);
   return (
-    <aside aria-label="Inspector" className={cn("w-80 shrink-0 flex-col overflow-y-auto border-l bg-background", className)}>
-      <InspectorContent />
+    <aside id="inspector" aria-label="Inspector" className={cn("w-96 shrink-0 flex-col overflow-hidden border-l bg-background", className)}>
+      <div className="flex items-center gap-2 border-b bg-background py-1.5 pr-2 pl-4">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Inspector</h2>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button variant="ghost" size="icon-sm" aria-label="Close inspector" onClick={() => setInspectorOpen(false)} className="ml-auto" />
+            }
+          >
+            <PanelRightClose />
+          </TooltipTrigger>
+          <TooltipContent>Hide panel</TooltipContent>
+        </Tooltip>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <InspectorContent />
+      </div>
     </aside>
   );
 }

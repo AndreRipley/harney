@@ -3,7 +3,7 @@
 import { type Connection, useReactFlow, type XYPosition } from "@xyflow/react";
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { checkConnection, HANDLES, isPartsEdge } from "@/lib/harness/connections";
+import { checkConnection, isDelegateEdge, isPartsEdge } from "@/lib/harness/connections";
 import { nodeTitle } from "@/lib/harness/kinds";
 import { AGENT_WIDTH, CARD_WIDTH } from "@/lib/harness/layout";
 import type { HarnessNode, NodeKind } from "@/lib/harness/types";
@@ -19,8 +19,31 @@ export function nodeIdAtPoint(point: XYPosition): string | null {
 
 function connectionFor(kind: NodeKind, newId: string, agentId: string): Connection {
   return kind === "agent"
-    ? { source: agentId, sourceHandle: HANDLES.delegate, target: newId, targetHandle: HANDLES.parent }
-    : { source: newId, sourceHandle: HANDLES.out, target: agentId, targetHandle: HANDLES.parts };
+    ? { source: agentId, target: newId, sourceHandle: null, targetHandle: null }
+    : { source: newId, target: agentId, sourceHandle: null, targetHandle: null };
+}
+
+function besideAgent(kind: NodeKind, agent: HarnessNode): XYPosition {
+  const { edges } = useHarnessStore.getState();
+  if (kind === "agent") {
+    const siblings = edges.filter((e) => e.source === agent.id && isDelegateEdge(e)).length;
+    return { x: agent.position.x + siblings * (AGENT_WIDTH + 60), y: agent.position.y + 260 };
+  }
+  const parts = edges.filter((e) => e.target === agent.id && isPartsEdge(e)).length;
+  return { x: agent.position.x - CARD_WIDTH - 96, y: agent.position.y - 20 + parts * 112 };
+}
+
+function connectTo(kind: NodeKind, id: string, agent: HarnessNode): boolean {
+  const connection = connectionFor(kind, id, agent.id);
+  const latest = useHarnessStore.getState();
+  const check = checkConnection(connection, latest.nodes, latest.edges);
+  if (!check.ok) {
+    toast.warning(check.reason, { id: "auto-connect" });
+    return false;
+  }
+  latest.connect(connection, false);
+  toast.success(`Connected to ${nodeTitle(agent.data)}`, { id: "auto-connect", duration: 1800 });
+  return true;
 }
 
 export function useCanvasActions() {
@@ -53,32 +76,31 @@ export function useCanvasActions() {
         position = { x: center.x - width / 2 + jitter, y: center.y - 50 + jitter };
       }
 
-      if (agent) {
-        if (kind === "agent") {
-          const siblings = state.edges.filter((e) => e.source === agent.id && e.targetHandle === HANDLES.parent).length;
-          position = { x: agent.position.x + siblings * (AGENT_WIDTH + 60), y: agent.position.y + 260 };
-        } else {
-          const parts = state.edges.filter((e) => e.target === agent.id && isPartsEdge(e)).length;
-          position = { x: agent.position.x - CARD_WIDTH - 96, y: agent.position.y - 20 + parts * 112 };
-        }
-      }
+      if (agent) position = besideAgent(kind, agent);
 
       const id = state.addNode(kind, position);
-
-      if (agent) {
-        const connection = connectionFor(kind, id, agent.id);
-        const latest = useHarnessStore.getState();
-        const check = checkConnection(connection, latest.nodes, latest.edges);
-        if (check.ok) {
-          latest.connect(connection, false);
-          toast.success(`Connected to ${nodeTitle(agent.data)}`, { id: "auto-connect", duration: 1800 });
-        } else {
-          toast.warning(check.reason, { id: "auto-connect" });
-        }
-      }
+      if (agent) connectTo(kind, id, agent);
       return id;
     },
     [screenToFlowPosition],
+  );
+
+  /**
+   * Gives an agent a part without touching the selection: connects a loose card
+   * of that kind if there is one, otherwise adds one beside the agent.
+   */
+  const addPartTo = useCallback(
+    (agentId: string, kind: NodeKind) => {
+      const state = useHarnessStore.getState();
+      const agent = state.nodes.find((n) => n.id === agentId);
+      if (!agent) return null;
+      const loose = state.nodes.find(
+        (n) => n.data.kind === kind && n.id !== agentId && !state.edges.some((e) => e.source === n.id || e.target === n.id),
+      );
+      const id = loose?.id ?? state.addNode(kind, besideAgent(kind, agent));
+      return connectTo(kind, id, agent) ? id : null;
+    },
+    [],
   );
 
   const focusNode = useCallback(
@@ -96,9 +118,23 @@ export function useCanvasActions() {
     [getNode, setCenter, getZoom],
   );
 
+  const revealNode = useCallback(
+    (id: string) => {
+      const node = getNode(id);
+      if (!node) return;
+      const width = node.measured?.width ?? CARD_WIDTH;
+      const height = node.measured?.height ?? 90;
+      setCenter(node.position.x + width / 2, node.position.y + height / 2, {
+        zoom: Math.max(getZoom(), 1),
+        duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 450,
+      });
+    },
+    [getNode, setCenter, getZoom],
+  );
+
   const fitAll = useCallback(() => {
     window.setTimeout(() => fitView({ padding: 0.2, maxZoom: 1.1, duration: 450 }), 60);
   }, [fitView]);
 
-  return { addCard, focusNode, fitAll };
+  return { addCard, addPartTo, focusNode, revealNode, fitAll };
 }

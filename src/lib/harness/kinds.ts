@@ -1,6 +1,9 @@
 import type {
   BuiltinTool,
   HarnessNodeData,
+  DecisionEvent,
+  DecisionQuestion,
+  DecisionQuestionType,
   HookEvent,
   HookScope,
   KindDataMap,
@@ -22,7 +25,7 @@ export interface KindMeta {
 export const KIND_META: Record<NodeKind, KindMeta> = {
   agent: {
     label: "Agent",
-    blurb: "The assistant itself. Connect parts to its left side.",
+    blurb: "The assistant itself. Drag any card to it.",
     group: "core",
     color: "#6366f1",
   },
@@ -68,6 +71,12 @@ export const KIND_META: Record<NodeKind, KindMeta> = {
     group: "guardrails",
     color: "#64748b",
   },
+  decision: {
+    label: "Jev",
+    blurb: "A typed yes, score, or choice from Jev that can block the agent.",
+    group: "guardrails",
+    color: "#0891b2",
+  },
 };
 
 export const KIND_ORDER: NodeKind[] = [
@@ -79,6 +88,7 @@ export const KIND_ORDER: NodeKind[] = [
   "rule",
   "policy",
   "hook",
+  "decision",
 ];
 
 export const GROUP_LABELS: Record<KindGroup, string> = {
@@ -132,6 +142,29 @@ export const HOOK_EVENT_LABELS: Record<HookEvent, string> = {
   stop: "When the agent finishes",
 };
 
+export const DECISION_EVENT_LABELS: Record<DecisionEvent, string> = {
+  preToolUse: "Before a tool runs",
+  userPromptSubmit: "When you send a message",
+  stop: "When the agent finishes",
+};
+
+export const DECISION_TYPE_LABELS: Record<DecisionQuestionType, string> = {
+  noul: "Yes or no",
+  choice: "Pick one",
+  score: "Score",
+};
+
+export function defaultDecisionQuestion(): DecisionQuestion {
+  return {
+    name: "block",
+    type: "noul",
+    instructions: "Should this be blocked?",
+    criteria: [],
+    blockChoices: [],
+    blockAt: 0.5,
+  };
+}
+
 export const HOOK_SCOPE_LABELS: Record<HookScope, string> = {
   any: "Any tool",
   shell: "Shell commands",
@@ -171,6 +204,13 @@ export function defaultConfig<K extends NodeKind>(kind: K): KindDataMap[K] {
       allowedDomains: [],
     },
     hook: { name: "New hook", event: "postToolUse", scope: "edit", command: "" },
+    decision: {
+      name: "Jev gate",
+      model: "jev-latest",
+      event: "preToolUse",
+      scope: "any",
+      questions: [defaultDecisionQuestion()],
+    },
   };
   return structuredClone(defaults[kind]);
 }
@@ -206,6 +246,8 @@ export function nodeTitle(data: HarnessNodeData): string {
       return data.config.name || "Permissions";
     case "hook":
       return data.config.name || "Unnamed hook";
+    case "decision":
+      return data.config.name || "Jev";
   }
 }
 
@@ -248,6 +290,15 @@ export function nodeSummary(data: HarnessNodeData): string {
         ? `${HOOK_EVENT_LABELS[event]} (${HOOK_SCOPE_LABELS[scope].toLowerCase()})`
         : HOOK_EVENT_LABELS[event];
       return command ? `${when}: ${truncate(command, 40)}` : when;
+    }
+    case "decision": {
+      const { event, scope, questions, model } = data.config;
+      const when =
+        event === "preToolUse"
+          ? `${DECISION_EVENT_LABELS[event]} (${HOOK_SCOPE_LABELS[scope].toLowerCase()})`
+          : DECISION_EVENT_LABELS[event];
+      const count = `${questions.length} ${questions.length === 1 ? "question" : "questions"}`;
+      return `${model || "jev-latest"} · ${when} · ${count}`;
     }
   }
 }

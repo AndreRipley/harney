@@ -7,6 +7,9 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  DECISION_EVENT_LABELS,
+  DECISION_TYPE_LABELS,
+  defaultDecisionQuestion,
   HOOK_EVENT_LABELS,
   HOOK_SCOPE_LABELS,
   isToolEvent,
@@ -15,7 +18,7 @@ import {
   REASONING_LABELS,
   TOOL_LABELS,
 } from "@/lib/harness/kinds";
-import type { HarnessNode, KindDataMap, NodeKind } from "@/lib/harness/types";
+import type { DecisionQuestion, HarnessNode, KindDataMap, NodeKind } from "@/lib/harness/types";
 import { cn } from "@/lib/utils";
 import { useHarnessStore } from "@/store/harnessStore";
 import { Field, ListField, Segmented } from "./fields";
@@ -434,6 +437,192 @@ function HookForm({ id, config }: { id: string; config: KindDataMap["hook"] }) {
   );
 }
 
+function DecisionForm({ id, config }: { id: string; config: KindDataMap["decision"] }) {
+  const update = useUpdate<"decision">(id);
+  const nameId = useId();
+  const modelId = useId();
+  const eventId = useId();
+  const setQuestion = (index: number, patch: Partial<DecisionQuestion>) => {
+    update({ questions: config.questions.map((question, i) => (i === index ? { ...question, ...patch } : question)) });
+  };
+  const addQuestion = () => {
+    const used = new Set(config.questions.map((question) => question.name));
+    let name = "question";
+    let count = 2;
+    while (used.has(name)) name = `question-${count++}`;
+    update({ questions: [...config.questions, { ...defaultDecisionQuestion(), name }] });
+  };
+  return (
+    <>
+      <Field label="Name" htmlFor={nameId}>
+        <Input id={nameId} value={config.name} onChange={(e) => update({ name: e.target.value })} placeholder="Safety gate" />
+      </Field>
+      <Field label="Jev model" htmlFor={modelId} hint="jev-latest tracks the current model. Pin a version like jev-1.13.0 if you tune thresholds.">
+        <Input
+          id={modelId}
+          value={config.model}
+          onChange={(e) => update({ model: e.target.value })}
+          placeholder="jev-latest"
+          className="font-mono text-[13px]"
+          spellCheck={false}
+        />
+      </Field>
+      <Field label="When it runs" htmlFor={eventId}>
+        <SimpleSelect
+          id={eventId}
+          label="When it runs"
+          value={config.event}
+          options={DECISION_EVENT_LABELS}
+          onChange={(event) => update({ event })}
+        />
+      </Field>
+      {config.event === "preToolUse" && (
+        <Field label="For which tools">
+          <Segmented
+            label="For which tools"
+            value={config.scope}
+            onChange={(scope) => update({ scope })}
+            options={(Object.entries(HOOK_SCOPE_LABELS) as [KindDataMap["decision"]["scope"], string][]).map(([value, label]) => ({
+              value,
+              label,
+            }))}
+          />
+        </Field>
+      )}
+      <div className="grid gap-3">
+        {config.questions.map((question, index) => (
+          <QuestionFields
+            key={index}
+            question={question}
+            canRemove={config.questions.length > 1}
+            onChange={(patch) => setQuestion(index, patch)}
+            onRemove={() => update({ questions: config.questions.filter((_, i) => i !== index) })}
+          />
+        ))}
+        <button type="button" onClick={addQuestion} className="justify-self-start text-xs font-medium text-muted-foreground hover:text-foreground">
+          Add a question
+        </button>
+      </div>
+      <p className="text-xs leading-snug text-muted-foreground">
+        Export writes a hook that sends the moment&apos;s input to Jev. Set TYPESAFE_API_KEY on your machine. The key is not saved in the project files.
+      </p>
+    </>
+  );
+}
+
+function QuestionFields({
+  question,
+  canRemove,
+  onChange,
+  onRemove,
+}: {
+  question: DecisionQuestion;
+  canRemove: boolean;
+  onChange: (patch: Partial<DecisionQuestion>) => void;
+  onRemove: () => void;
+}) {
+  const nameId = useId();
+  const instructionsId = useId();
+  const blockAtId = useId();
+  return (
+    <div className="grid gap-3 rounded-lg border p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Question</span>
+        {canRemove && (
+          <button type="button" onClick={onRemove} className="text-xs font-medium text-muted-foreground hover:text-destructive">
+            Remove
+          </button>
+        )}
+      </div>
+      <Field label="Name" htmlFor={nameId} hint="Jev returns the answer under this name.">
+        <Input
+          id={nameId}
+          value={question.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="block"
+          className="font-mono text-[13px]"
+          spellCheck={false}
+        />
+      </Field>
+      <Field label="Answer type">
+        <Segmented
+          label="Answer type"
+          value={question.type}
+          onChange={(type) => onChange({ type })}
+          options={(Object.entries(DECISION_TYPE_LABELS) as [DecisionQuestion["type"], string][]).map(([value, label]) => ({
+            value,
+            label,
+          }))}
+        />
+      </Field>
+      <Field label="Instructions" htmlFor={instructionsId}>
+        <Textarea
+          id={instructionsId}
+          value={question.instructions}
+          rows={2}
+          onChange={(e) => onChange({ instructions: e.target.value })}
+          placeholder="Should this be blocked?"
+        />
+      </Field>
+      {question.type === "choice" && (
+        <>
+          <ListField
+            label="Options"
+            hint="One per line, as key: what it means."
+            value={question.criteria}
+            onChange={(criteria) => onChange({ criteria })}
+            placeholder={"allow: safe to continue\ndeny: stop this"}
+          />
+          <ListField
+            label="Block on these answers"
+            hint="The keys that should stop the agent."
+            value={question.blockChoices}
+            onChange={(blockChoices) => onChange({ blockChoices })}
+            placeholder="deny"
+          />
+        </>
+      )}
+      {question.type === "score" && (
+        <>
+          <ListField
+            label="Scale, low to high"
+            hint="2 to 10 levels. Describe each one."
+            value={question.criteria}
+            onChange={(criteria) => onChange({ criteria })}
+            placeholder={"fine\nserious"}
+          />
+          <Field label="Block at or above" htmlFor={blockAtId} hint="0 is the lowest level.">
+            <Input
+              id={blockAtId}
+              type="number"
+              min={0}
+              max={9}
+              step={1}
+              value={question.blockAt}
+              onChange={(e) => onChange({ blockAt: Number(e.target.value) })}
+              className="font-mono text-[13px]"
+            />
+          </Field>
+        </>
+      )}
+      {question.type === "noul" && (
+        <Field label="Block when yes is at least" htmlFor={blockAtId} hint="0.5 blocks when Jev is at least 50% sure the answer is yes.">
+          <Input
+            id={blockAtId}
+            type="number"
+            min={0}
+            max={1}
+            step={0.05}
+            value={question.blockAt}
+            onChange={(e) => onChange({ blockAt: Number(e.target.value) })}
+            className="font-mono text-[13px]"
+          />
+        </Field>
+      )}
+    </div>
+  );
+}
+
 export function NodeForm({ node, isSubagent }: { node: HarnessNode; isSubagent: boolean }) {
   const { id, data } = node;
   switch (data.kind) {
@@ -453,5 +642,7 @@ export function NodeForm({ node, isSubagent }: { node: HarnessNode; isSubagent: 
       return <PolicyForm id={id} config={data.config} />;
     case "hook":
       return <HookForm id={id} config={data.config} />;
+    case "decision":
+      return <DecisionForm id={id} config={data.config} />;
   }
 }

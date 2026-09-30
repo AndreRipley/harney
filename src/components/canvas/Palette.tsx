@@ -1,13 +1,16 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { PanelLeftClose, Search } from "lucide-react";
 import { type DragEvent, useState } from "react";
 import { KIND_ICONS } from "@/components/harness/kindIcons";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DND_MIME, useCanvasActions } from "@/hooks/useCanvasActions";
 import { GROUP_LABELS, KIND_META, KIND_ORDER, type KindGroup } from "@/lib/harness/kinds";
 import type { NodeKind } from "@/lib/harness/types";
 import { cn } from "@/lib/utils";
+import { useHarnessStore } from "@/store/harnessStore";
 
 const GROUPS: KindGroup[] = ["core", "capabilities", "guardrails"];
 
@@ -91,8 +94,21 @@ export function PaletteList({ onAdded, compact = false }: { onAdded?: () => void
 }
 
 export function Palette({ className }: { className?: string }) {
+  const setPartsPanelOpen = useHarnessStore((s) => s.setPartsPanelOpen);
   return (
-    <aside aria-label="Parts" className={cn("w-64 shrink-0 flex-col border-r bg-sidebar", className)}>
+    <aside id="parts" aria-label="Parts" className={cn("w-64 shrink-0 flex-col border-r bg-sidebar", className)}>
+      <div className="flex justify-start border-b bg-sidebar px-2 py-1.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button variant="ghost" size="icon-sm" aria-label="Close parts" onClick={() => setPartsPanelOpen(false)} />
+            }
+          >
+            <PanelLeftClose />
+          </TooltipTrigger>
+          <TooltipContent>Hide panel</TooltipContent>
+        </Tooltip>
+      </div>
       <PaletteList />
       <p className="border-t px-4 py-3 text-xs leading-relaxed text-muted-foreground">
         <span className="font-medium text-foreground">Tip:</span> select an agent first, then click a part to add

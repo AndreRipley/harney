@@ -1,4 +1,5 @@
 import { allAgents, projectHooks, projectMcpServers } from "../compile";
+import { buildDecisionExport, cursorDecisionEvent } from "./decisions";
 import { slugify } from "../kinds";
 import type { ExportFile, Feature, HarnessConfig, HookData, TargetNote } from "../types";
 import {
@@ -23,6 +24,7 @@ export const CURSOR_SUPPORT: Record<Feature, FeatureSupport> = {
   network: { level: "none", note: "Cursor's project files can't limit network access." },
   mcp: { level: "full", note: "Written to .cursor/mcp.json." },
   hooks: { level: "partial", note: "Written to .cursor/hooks.json. Some moments have no Cursor equivalent." },
+  decisions: { level: "partial", note: "Runs as a Cursor hook that asks Jev. A decision on file edits has no matching moment, so it's left out." },
   subagents: { level: "partial", note: "Each subagent becomes a rule Cursor pulls in when its description matches." },
 };
 
@@ -139,6 +141,14 @@ export function buildCursor(config: HarnessConfig): { files: ExportFile[]; notes
     }
     (hooks[event] ??= []).push({ command: hook.command.trim() });
   }
+  const decisions = buildDecisionExport(config, "cursor");
+  files.push(...decisions.files);
+  for (const decision of decisions.entries) {
+    const event = cursorDecisionEvent(decision);
+    if (!event) continue;
+    (hooks[event] ??= []).push({ command: decision.command });
+  }
+  skipped.push(...decisions.skipped);
   if (Object.keys(hooks).length) {
     files.push({
       path: ".cursor/hooks.json",

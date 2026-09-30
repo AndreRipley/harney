@@ -2,13 +2,48 @@
 
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { CircleAlert, TriangleAlert } from "lucide-react";
-import { memo } from "react";
+import { Fragment, memo } from "react";
 import { NodeIcon } from "@/components/harness/kindIcons";
-import { HANDLES, isDelegateEdge, isPartsEdge } from "@/lib/harness/connections";
+import { CONNECTORS, isDelegateEdge, isPartsEdge } from "@/lib/harness/connections";
 import { KIND_META, nodeSummary, nodeTitle } from "@/lib/harness/kinds";
 import type { HarnessNode, Issue, ToolMode } from "@/lib/harness/types";
 import { cn } from "@/lib/utils";
 import { useCompiled, useHarnessStore } from "@/store/harnessStore";
+
+const FLOW_POSITION = {
+  top: Position.Top,
+  bottom: Position.Bottom,
+  left: Position.Left,
+  right: Position.Right,
+} as const;
+
+function Connectors({ color }: { color: string }) {
+  const tint = { ["--handle-color" as string]: color };
+  return (
+    <>
+      {CONNECTORS.map((connector) => {
+        const style = {
+          ...tint,
+          ...(connector.side === "top" || connector.side === "bottom"
+            ? { left: `${connector.along}%` }
+            : { top: `${connector.along}%` }),
+        };
+        return (
+          <Fragment key={connector.id}>
+            <Handle type="source" position={FLOW_POSITION[connector.side]} id={`${connector.id}-out`} className="harness-handle" style={style} />
+            <Handle
+              type="target"
+              position={FLOW_POSITION[connector.side]}
+              id={`${connector.id}-in`}
+              className="harness-handle harness-handle-target"
+              style={style}
+            />
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
 
 const MODE_STYLES: Record<ToolMode, string> = {
   allow: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
@@ -76,11 +111,7 @@ function HarnessNodeCardImpl({ id, data, selected }: NodeProps<HarnessNode>) {
             )}
           </div>
         </div>
-        <Handle type="target" position={Position.Left} id={HANDLES.parts} className="harness-handle" style={{ ["--handle-color" as string]: color }} />
-        <Handle type="target" position={Position.Top} id={HANDLES.parent} className="harness-handle" style={{ ["--handle-color" as string]: color }} />
-        <Handle type="source" position={Position.Bottom} id={HANDLES.delegate} className="harness-handle" style={{ ["--handle-color" as string]: color }} />
-        <span className="handle-label -left-2 top-1/2 -translate-x-full -translate-y-1/2">Parts</span>
-        <span className="handle-label bottom-0 left-1/2 -translate-x-1/2 translate-y-[calc(100%+10px)]">Subagents</span>
+        <Connectors color={color} />
       </div>
     );
   }
@@ -118,7 +149,7 @@ function HarnessNodeCardImpl({ id, data, selected }: NodeProps<HarnessNode>) {
           <div className="truncate text-xs text-muted-foreground">{nodeSummary(data)}</div>
         )}
       </div>
-      <Handle type="source" position={Position.Right} id={HANDLES.out} className="harness-handle" style={{ ["--handle-color" as string]: color }} />
+      <Connectors color={color} />
     </div>
   );
 }

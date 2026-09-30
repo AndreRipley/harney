@@ -13,13 +13,14 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useTheme } from "next-themes";
-import { type DragEvent, useCallback } from "react";
+import { type DragEvent, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
 import { DND_MIME, nodeIdAtPoint, useCanvasActions } from "@/hooks/useCanvasActions";
-import { checkConnection, HANDLES } from "@/lib/harness/connections";
+import { resolveConnection } from "@/lib/harness/connections";
 import { KIND_META } from "@/lib/harness/kinds";
 import type { HarnessEdge, HarnessNode, NodeKind } from "@/lib/harness/types";
+import { cn } from "@/lib/utils";
 import { useHarnessStore } from "@/store/harnessStore";
 import { EmptyState } from "./EmptyState";
 import { HarnessNodeCard } from "./HarnessNodeCard";
@@ -27,27 +28,6 @@ import { HarnessNodeCard } from "./HarnessNodeCard";
 const nodeTypes = { harness: HarnessNodeCard };
 
 const defaultEdgeOptions = { type: "default", style: { strokeWidth: 2 } };
-
-/** Works out the intended connection when a line is dropped on a card body instead of a dot. */
-function inferConnection(fromNodeId: string, fromHandle: string | null, toNodeId: string): Connection | null {
-  const { nodes } = useHarnessStore.getState();
-  const from = nodes.find((n) => n.id === fromNodeId);
-  const to = nodes.find((n) => n.id === toNodeId);
-  if (!from || !to || from.id === to.id) return null;
-
-  if (from.data.kind !== "agent") {
-    return { source: from.id, sourceHandle: HANDLES.out, target: to.id, targetHandle: HANDLES.parts };
-  }
-  if (fromHandle === HANDLES.delegate) {
-    return { source: from.id, sourceHandle: HANDLES.delegate, target: to.id, targetHandle: HANDLES.parent };
-  }
-  if (fromHandle === HANDLES.parent) {
-    return { source: to.id, sourceHandle: HANDLES.delegate, target: from.id, targetHandle: HANDLES.parent };
-  }
-  return to.data.kind === "agent"
-    ? null
-    : { source: to.id, sourceHandle: HANDLES.out, target: from.id, targetHandle: HANDLES.parts };
-}
 
 export function Canvas() {
   const { nodes, edges, onNodesChange, onEdgesChange, connect, beginDrag } = useHarnessStore(
@@ -60,19 +40,29 @@ export function Canvas() {
       beginDrag: s.beginDrag,
     })),
   );
+  const liveNodeId = useHarnessStore((s) => s.playActiveNodeId);
+  const liveEdgeId = useHarnessStore((s) => s.playActiveEdgeId);
+  const shownNodes = useMemo(
+    () => nodes.map((node) => (node.id === liveNodeId ? { ...node, className: "harness-live" } : node)),
+    [nodes, liveNodeId],
+  );
+  const shownEdges = useMemo(
+    () => edges.map((edge) => (edge.id === liveEdgeId ? { ...edge, className: cn(edge.className, "harness-live") } : edge)),
+    [edges, liveEdgeId],
+  );
   const { resolvedTheme } = useTheme();
   const { addCard } = useCanvasActions();
 
   const isValidConnection = useCallback<IsValidConnection<HarnessEdge>>((connection) => {
     const { nodes: current, edges: currentEdges } = useHarnessStore.getState();
-    return checkConnection(connection, current, currentEdges).ok;
+    return resolveConnection(connection.source, connection.target, current, currentEdges, connection).ok;
   }, []);
 
   const tryConnect = useCallback(
     (connection: Connection) => {
       const { nodes: current, edges: currentEdges } = useHarnessStore.getState();
-      const result = checkConnection(connection, current, currentEdges);
-      if (result.ok) connect(connection);
+      const result = resolveConnection(connection.source, connection.target, current, currentEdges, connection);
+      if (result.ok) connect(result.connection);
       else toast.error(result.reason, { id: "connection" });
     },
     [connect],
@@ -82,26 +72,20 @@ export function Canvas() {
     (event, state) => {
       if (state.isValid || !state.fromNode) return;
       const point = "changedTouches" in event ? event.changedTouches[0] : event;
-      if (state.toHandle) {
-        const from = state.fromHandle;
-        const to = state.toHandle;
-        if (!from) return;
-        const attempt =
-          from.type === "source"
-            ? { source: from.nodeId, sourceHandle: from.id, target: to.nodeId, targetHandle: to.id }
-            : { source: to.nodeId, sourceHandle: to.id, target: from.nodeId, targetHandle: from.id };
-        const { nodes: current, edges: currentEdges } = useHarnessStore.getState();
-        const result = checkConnection(attempt, current, currentEdges);
-        if (!result.ok) toast.error(result.reason, { id: "connection" });
+      const hitId = state.toHandle?.nodeId ?? nodeIdAtPoint({ x: point.clientX, y: point.clientY });
+      if (!hitId || hitId === state.fromNode.id) return;
+      const { nodes: current, edges: currentEdges } = useHarnessStore.getState();
+      const result = resolveConnection(state.fromNode.id, hitId, current, currentEdges, {
+        sourceHandle: state.fromHandle?.id,
+        targetHandle: state.toHandle?.id,
+      });
+      if (!result.ok) {
+        toast.error(result.reason, { id: "connection" });
         return;
       }
-      const hitId = nodeIdAtPoint({ x: point.clientX, y: point.clientY });
-      if (!hitId || hitId === state.fromNode.id) return;
-      const inferred = inferConnection(state.fromNode.id, state.fromHandle?.id ?? null, hitId);
-      if (inferred) tryConnect(inferred);
-      else toast.error("Connect parts to an Agent card, not to other parts.", { id: "connection" });
+      if (!state.toHandle) connect(result.connection);
     },
-    [tryConnect],
+    [connect],
   );
 
   const onDragOver = useCallback((event: DragEvent) => {
@@ -123,8 +107,8 @@ export function Canvas() {
   return (
     <div className="absolute inset-0" onDragOver={onDragOver} onDrop={onDrop}>
       <ReactFlow<HarnessNode, HarnessEdge>
-        nodes={nodes}
-        edges={edges}
+        nodes={shownNodes}
+        edges={shownEdges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
@@ -136,6 +120,9 @@ export function Canvas() {
         connectionLineType={ConnectionLineType.Bezier}
         connectionLineStyle={{ strokeWidth: 2, strokeDasharray: "6 4" }}
         colorMode={resolvedTheme === "dark" ? "dark" : "light"}
+        panOnScroll
+        panOnScrollSpeed={0.6875}
+        zoomOnScroll={false}
         snapToGrid
         snapGrid={[16, 16]}
         fitView

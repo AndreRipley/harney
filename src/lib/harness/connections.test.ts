@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkConnection, HANDLES } from "./connections";
+import { checkConnection, resolveConnection } from "./connections";
 import { buildGraph } from "./presets";
 
 const graph = () =>
@@ -12,18 +12,8 @@ const graph = () =>
     { id: "p", kind: "prompt" },
   ]);
 
-const part = (source: string, target: string) => ({
-  source,
-  target,
-  sourceHandle: HANDLES.out,
-  targetHandle: HANDLES.parts,
-});
-const delegate = (source: string, target: string) => ({
-  source,
-  target,
-  sourceHandle: HANDLES.delegate,
-  targetHandle: HANDLES.parent,
-});
+const part = (source: string, target: string) => ({ source, target });
+const delegate = (source: string, target: string) => ({ source, target });
 
 describe("checkConnection", () => {
   it("lets a part plug into an agent", () => {
@@ -60,9 +50,37 @@ describe("checkConnection", () => {
     expect(checkConnection(delegate("b", "c"), nodes, edges)).toEqual({ ok: true });
   });
 
-  it("explains agent-to-parts drops", () => {
+  it("treats a drag from an agent onto a part as that part belonging to the agent", () => {
     const { nodes, edges } = graph();
-    const result = checkConnection({ ...delegate("a", "c"), targetHandle: HANDLES.parts }, nodes, edges);
-    expect(!result.ok && result.reason).toMatch(/bottom of the main agent/);
+    const result = resolveConnection("a", "p", nodes, edges);
+    expect(result.ok && result.connection).toMatchObject({
+      source: "p",
+      target: "a",
+      data: { role: "parts" },
+    });
+  });
+
+  it("keeps the wire on the connectors that were used", () => {
+    const { nodes, edges } = graph();
+    const result = resolveConnection("a", "p", nodes, edges, {
+      sourceHandle: "top-a-out",
+      targetHandle: "right-in",
+    });
+    expect(result.ok && result.connection).toMatchObject({
+      source: "p",
+      target: "a",
+      sourceHandle: "right-out",
+      targetHandle: "top-a-in",
+    });
+  });
+
+  it("makes the card you drag from the parent of the other agent", () => {
+    const { nodes, edges } = graph();
+    const result = resolveConnection("b", "c", nodes, edges);
+    expect(result.ok && result.connection).toMatchObject({
+      source: "b",
+      target: "c",
+      data: { role: "delegate" },
+    });
   });
 });

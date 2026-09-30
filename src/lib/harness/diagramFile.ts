@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { presentEdge } from "./connections";
 import { defaultConfig } from "./kinds";
 import type { HarnessEdge, HarnessNode, HarnessNodeData, NodeKind } from "./types";
 
 export const DIAGRAM_VERSION = 1;
 
-const kindSchema = z.enum(["agent", "model", "prompt", "tool", "mcp", "rule", "policy", "hook"]);
+const kindSchema = z.enum(["agent", "model", "prompt", "tool", "mcp", "rule", "policy", "hook", "decision"]);
 const strings = z.array(z.string()).catch([]);
 
 const configSchemas = {
@@ -50,6 +51,24 @@ const configSchemas = {
     scope: z.enum(["any", "shell", "edit"]).catch("any"),
     command: z.string().catch(""),
   }),
+  decision: z.object({
+    name: z.string().catch("Jev gate"),
+    model: z.string().catch("jev-latest"),
+    event: z.enum(["preToolUse", "userPromptSubmit", "stop"]).catch("preToolUse"),
+    scope: z.enum(["any", "shell", "edit"]).catch("any"),
+    questions: z
+      .array(
+        z.object({
+          name: z.string().catch("block"),
+          type: z.enum(["choice", "score", "noul"]).catch("noul"),
+          instructions: z.string().catch(""),
+          criteria: strings,
+          blockChoices: strings,
+          blockAt: z.number().catch(0.5),
+        }),
+      )
+      .catch([]),
+  }),
 } satisfies Record<NodeKind, z.ZodType>;
 
 const fileSchema = z.object({
@@ -69,6 +88,8 @@ const fileSchema = z.object({
       target: z.string(),
       sourceHandle: z.string().nullable().optional(),
       targetHandle: z.string().nullable().optional(),
+      role: z.enum(["parts", "delegate"]).optional(),
+      data: z.object({ role: z.enum(["parts", "delegate"]) }).optional(),
     }),
   ),
 });
@@ -85,12 +106,11 @@ export function serializeDiagram(doc: DiagramDocument): string {
       version: DIAGRAM_VERSION,
       name: doc.name,
       nodes: doc.nodes.map(({ id, position, data }) => ({ id, position, data })),
-      edges: doc.edges.map(({ id, source, target, sourceHandle, targetHandle }) => ({
+      edges: doc.edges.map(({ id, source, target, data }) => ({
         id,
         source,
         target,
-        sourceHandle,
-        targetHandle,
+        role: data?.role,
       })),
     },
     null,
@@ -130,6 +150,17 @@ export function parseDiagram(text: string): DiagramDocument {
     });
   }
   const ids = new Set(nodes.map((n) => n.id));
-  const edges = parsed.data.edges.filter((e) => ids.has(e.source) && ids.has(e.target));
+  const edges = parsed.data.edges
+    .filter((e) => ids.has(e.source) && ids.has(e.target))
+    .map((e) =>
+      presentEdge({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+        data: e.data ?? (e.role ? { role: e.role } : undefined),
+      }),
+    );
   return { name: parsed.data.name, nodes, edges };
 }

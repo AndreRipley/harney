@@ -12,10 +12,13 @@ import {
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { compileGraph, type CompileResult } from "@/lib/harness/compile";
+import { presentEdge, resolveConnection } from "@/lib/harness/connections";
 import type { DiagramDocument } from "@/lib/harness/diagramFile";
 import { makeNodeData } from "@/lib/harness/kinds";
 import { autoLayout } from "@/lib/harness/layout";
+import type { PlayStep } from "@/lib/harness/playRun";
 import type {
+  HarnessConfig,
   HarnessEdge,
   HarnessNode,
   HarnessNodeData,
@@ -23,6 +26,20 @@ import type {
   NodeKind,
   TargetId,
 } from "@/lib/harness/types";
+
+export interface PlayTurn {
+  id: string;
+  role: "user" | "assistant" | "notice";
+  text: string;
+  /** Pasted file or notes sent along with a user message. */
+  context?: string;
+  steps: PlayStep[];
+  usage?: { input: number; output: number };
+  /** The same model with no harness, when Compare is on. */
+  plain?: { text: string; usage?: { input: number; output: number }; error?: string; running?: boolean };
+  effects?: string[];
+  error?: string;
+}
 
 interface Snapshot {
   name: string;
@@ -46,6 +63,16 @@ interface HarnessState {
   previewTarget: TargetId;
   exportOpen: boolean;
   paletteOpen: boolean;
+  partsPanelOpen: boolean;
+  inspectorOpen: boolean;
+  rightTab: "inspect" | "try";
+  tryUnread: boolean;
+  playTurns: PlayTurn[];
+  playRunning: boolean;
+  playActiveNodeId: string | null;
+  playActiveEdgeId: string | null;
+  playBaseline: HarnessConfig | null;
+  tryCompare: boolean;
 
   setName: (name: string) => void;
   onNodesChange: (changes: NodeChange<HarnessNode>[]) => void;
@@ -66,6 +93,19 @@ interface HarnessState {
   setPreviewTarget: (target: TargetId) => void;
   setExportOpen: (open: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
+  setPartsPanelOpen: (open: boolean) => void;
+  setInspectorOpen: (open: boolean) => void;
+  setRightTab: (tab: "inspect" | "try") => void;
+  openTry: () => void;
+  closeTry: () => void;
+  setPlayHighlight: (nodeId: string | null, edgeId: string | null) => void;
+  setPlayRunning: (running: boolean) => void;
+  pushPlayTurn: (turn: PlayTurn) => void;
+  patchPlayTurn: (id: string, patch: Partial<PlayTurn>) => void;
+  clearPlay: () => void;
+  setPlayBaseline: (config: HarnessConfig | null) => void;
+  markTryUnread: () => void;
+  setTryCompare: (on: boolean) => void;
 }
 
 const newId = (kind: string) => `${kind}-${crypto.randomUUID().slice(0, 8)}`;
@@ -100,14 +140,26 @@ export const useHarnessStore = create<HarnessState>()(
       previewTarget: "claude",
       exportOpen: false,
       paletteOpen: false,
+      partsPanelOpen: true,
+      inspectorOpen: true,
+      rightTab: "inspect",
+      tryUnread: false,
+      playTurns: [],
+      playRunning: false,
+      playActiveNodeId: null,
+      playActiveEdgeId: null,
+      playBaseline: null,
+      tryCompare: true,
 
       setName: (name) => set((s) => ({ ...withHistory(s, "name"), name })),
 
       onNodesChange: (changes) =>
         set((s) => {
           const structural = changes.some((c) => c.type === "remove" || c.type === "add");
+          const picked = s.rightTab === "try" && changes.some((c) => c.type === "select" && c.selected);
           return {
             ...(structural ? withHistory(s, "delete") : {}),
+            ...(picked ? { rightTab: "inspect" as const, inspectorOpen: true } : {}),
             nodes: applyNodeChanges(changes, s.nodes),
           };
         }),
@@ -122,13 +174,20 @@ export const useHarnessStore = create<HarnessState>()(
         }),
 
       connect: (connection, recordHistory = true) =>
-        set((s) => ({
-          ...(recordHistory ? withHistory(s) : {}),
-          edges: addEdge(
-            { ...connection, id: `e-${connection.source}-${connection.target}-${Date.now()}` },
-            s.edges,
-          ),
-        })),
+        set((s) => {
+          const resolved = resolveConnection(connection.source, connection.target, s.nodes, s.edges, connection);
+          if (!resolved.ok) return s;
+          return {
+            ...(recordHistory ? withHistory(s) : {}),
+            edges: addEdge(
+              presentEdge({
+                ...resolved.connection,
+                id: `e-${resolved.connection.source}-${resolved.connection.target}-${Date.now()}`,
+              }),
+              s.edges,
+            ),
+          };
+        }),
 
       addNode: (kind, position) => {
         const id = newId(kind);
@@ -192,6 +251,7 @@ export const useHarnessStore = create<HarnessState>()(
         set((s) => ({
           nodes: s.nodes.map((n) => (n.selected === (n.id === id) ? n : { ...n, selected: n.id === id })),
           edges: s.edges.map((e) => (e.selected ? { ...e, selected: false } : e)),
+          ...(id && s.rightTab === "try" ? { rightTab: "inspect" as const, inspectorOpen: true } : {}),
         })),
 
       selectAll: () => set((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) })),
@@ -240,6 +300,20 @@ export const useHarnessStore = create<HarnessState>()(
       setPreviewTarget: (previewTarget) => set({ previewTarget }),
       setExportOpen: (exportOpen) => set({ exportOpen }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+      setPartsPanelOpen: (partsPanelOpen) => set({ partsPanelOpen }),
+      setInspectorOpen: (inspectorOpen) => set({ inspectorOpen }),
+      setRightTab: (rightTab) => set({ rightTab, ...(rightTab === "try" ? { tryUnread: false } : {}) }),
+      openTry: () => set({ rightTab: "try", tryUnread: false }),
+      closeTry: () => set({ rightTab: "inspect" }),
+      setPlayHighlight: (playActiveNodeId, playActiveEdgeId) => set({ playActiveNodeId, playActiveEdgeId }),
+      setPlayRunning: (playRunning) => set({ playRunning }),
+      pushPlayTurn: (turn) => set((s) => ({ playTurns: [...s.playTurns, turn] })),
+      patchPlayTurn: (id, patch) =>
+        set((s) => ({ playTurns: s.playTurns.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)) })),
+      clearPlay: () => set({ playTurns: [], playBaseline: null, playActiveNodeId: null, playActiveEdgeId: null, playRunning: false }),
+      setPlayBaseline: (playBaseline) => set({ playBaseline }),
+      markTryUnread: () => set((s) => (s.rightTab === "try" ? {} : { tryUnread: true })),
+      setTryCompare: (tryCompare) => set({ tryCompare }),
     }),
     {
       name: "harness-studio:v1",
@@ -247,15 +321,27 @@ export const useHarnessStore = create<HarnessState>()(
       partialize: (s) => ({
         name: s.name,
         nodes: s.nodes.map(({ id, type, position, data }) => ({ id, type, position, data })),
-        edges: s.edges.map(({ id, source, target, sourceHandle, targetHandle }) => ({
+        edges: s.edges.map(({ id, source, target, sourceHandle, targetHandle, data }) => ({
           id,
           source,
           target,
           sourceHandle,
           targetHandle,
+          data,
         })),
         previewTarget: s.previewTarget,
+        partsPanelOpen: s.partsPanelOpen,
+        inspectorOpen: s.inspectorOpen,
+        tryCompare: s.tryCompare,
       }),
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<HarnessState>;
+        return {
+          ...current,
+          ...saved,
+          edges: (saved.edges ?? current.edges).map((edge) => presentEdge(edge)),
+        };
+      },
     },
   ),
 );

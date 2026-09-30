@@ -1,5 +1,6 @@
-import { projectHooks, projectMcpServers, toolModes } from "./compile";
+import { projectDecisions, projectHooks, projectMcpServers, toolModes } from "./compile";
 import { TARGETS } from "./exporters";
+import { JEV_KEY_ENV } from "./jev";
 import type { ExportFile, HarnessConfig, TargetId } from "./types";
 
 export type SetupStepKind = "files" | "warning" | "secrets" | "install" | "launch" | "try";
@@ -62,10 +63,17 @@ function requiredSecrets(config: HarnessConfig): SetupItem[] {
       byVar.set(v, [...(byVar.get(v) ?? []), server.name]);
     }
   }
-  return [...byVar.entries()].map(([name, servers]) => ({
+  const secrets = [...byVar.entries()].map(([name, servers]) => ({
     name,
     detail: `Used by the ${listNames(servers)} server${servers.length > 1 ? "s" : ""}.`,
   }));
+  if (projectDecisions(config).length) {
+    secrets.push({
+      name: JEV_KEY_ENV,
+      detail: "Used by Jev decisions. The script reads it from the environment, so the key stays out of the files.",
+    });
+  }
+  return secrets;
 }
 
 function requiredRuntimes(config: HarnessConfig): SetupItem[] {
@@ -82,6 +90,7 @@ function requiredRuntimes(config: HarnessConfig): SetupItem[] {
     if (server.transport === "stdio") check(server.command, `the ${server.name} server`);
   }
   for (const hook of projectHooks(config)) check(hook.command, `the "${hook.name}" hook`);
+  for (const decision of projectDecisions(config)) check("node", `the "${decision.name}" Jev decision`);
   return [...needs.values()];
 }
 
